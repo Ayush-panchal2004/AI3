@@ -1,0 +1,7 @@
+{
+  "name": "OmniScience v2.0",
+  "description": "Integrated AI Research Environment with Live File Synchronization.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
