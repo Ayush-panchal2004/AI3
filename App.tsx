@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   Terminal as TerminalIcon, 
   Mic, 
@@ -30,7 +30,11 @@ import {
   MonitorPlay,
   StickyNote,
   Presentation,
-  Table
+  Table,
+  Globe,
+  Binary,
+  Variable,
+  Box
 } from 'lucide-react';
 import { GoogleGenAI } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
@@ -38,14 +42,14 @@ import remarkGfm from 'remark-gfm';
 
 // --- Types ---
 
-type FileType = 'chat' | 'code' | 'doc' | 'whiteboard' | 'sheet' | 'slide' | 'note';
+type FileType = 'chat' | 'code' | 'doc' | 'whiteboard' | 'sheet' | 'slide' | 'note' | 'search';
 
 interface VirtualFile {
   id: string;
   name: string;
   type: FileType;
-  content: string; // For text/code/doc
-  data?: any; // For structured data 
+  subtype?: 'python' | 'cpp' | 'matlab';
+  content: string; 
 }
 
 interface Message {
@@ -73,10 +77,6 @@ Your Primary Persona is **Specialist #0: The Liaison**.
 1.  **DEEP SYNC**: You have full access to the user's workspace. You can READ all open files and WRITE to them.
 2.  **ACTION OVER CHAT**: If the user asks for a summary, paper, or code, DO NOT just dump it in the chat. CREATE A FILE or UPDATE THE ACTIVE FILE.
 3.  **SPECIALIST DELEGATION**: Explicitly state which specialist is acting.
-    - Coding -> **The Pythonista**
-    - Physics -> **The Quantum Mechanic**
-    - Writing -> **The Documentarian**
-    - Planning -> **The Orchestrator**
 
 **FILE MANIPULATION COMMANDS:**
 To perform actions, you must include a JSON block at the END of your response.
@@ -94,25 +94,29 @@ Format:
 **BEHAVIOR:**
 - Be concise, professional, and dense. No fluff.
 - If the user clicks "RUN" on code, act as the Interpreter and output the result.
-- If the user wants a research paper, create a ".doc" file and fill it with academic-standard content (LaTeX formatted math).
 - Use Markdown tables for structured data in chat.
 `;
 
 // --- Components ---
 
-const SidebarItem = ({ icon: Icon, label, onClick, active, fileType }: any) => (
+const SidebarItem = ({ icon: Icon, label, onClick, active, fileType, subIcon }: any) => (
   <div 
-    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm transition-colors group relative cursor-pointer ${active ? 'bg-[#37373d] text-white' : 'text-[#cccccc] hover:bg-[#2a2d2e]'}`}
+    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm transition-colors group relative cursor-pointer select-none ${active ? 'bg-[#37373d] text-white' : 'text-[#cccccc] hover:bg-[#2a2d2e]'}`}
     onClick={onClick}
   >
-    <Icon size={14} className={
-        fileType === 'chat' ? 'text-indigo-400' :
-        fileType === 'code' ? 'text-yellow-400' :
-        fileType === 'sheet' ? 'text-green-400' :
-        fileType === 'doc' ? 'text-blue-400' :
-        fileType === 'slide' ? 'text-orange-400' :
-        'text-slate-400'
-    } />
+    <div className="relative">
+      <Icon size={14} className={
+          fileType === 'chat' ? 'text-indigo-400' :
+          fileType === 'code' ? 'text-yellow-400' :
+          fileType === 'sheet' ? 'text-green-500' :
+          fileType === 'doc' ? 'text-blue-500' :
+          fileType === 'slide' ? 'text-orange-500' :
+          fileType === 'search' ? 'text-blue-300' :
+          fileType === 'note' ? 'text-yellow-300' :
+          'text-slate-400'
+      } />
+      {subIcon && <div className="absolute -bottom-1 -right-1 text-[8px] bg-[#1e1e1e] rounded-full">{subIcon}</div>}
+    </div>
     <span className="truncate flex-1">{label}</span>
   </div>
 );
@@ -129,6 +133,7 @@ const Tab = ({ file, active, onClick, onClose }: any) => (
     {file.type === 'sheet' && <Grid3X3 size={14} />}
     {file.type === 'slide' && <Presentation size={14} />}
     {file.type === 'note' && <StickyNote size={14} />}
+    {file.type === 'search' && <Search size={14} />}
     <span className="truncate text-xs flex-1">{file.name}</span>
     <button onClick={(e) => { e.stopPropagation(); onClose(); }} className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-slate-700 rounded text-slate-400">
       <X size={12} />
@@ -141,9 +146,12 @@ const Tab = ({ file, active, onClick, onClose }: any) => (
 const CodeEditor = ({ file, onChange, onRun }: any) => (
   <div className="flex flex-col h-full bg-[#1e1e1e]">
       <div className="flex items-center justify-between p-2 bg-[#1e1e1e] border-b border-[#333] text-xs text-slate-400">
-          <span className="font-mono text-indigo-400 flex items-center gap-2"><Code2 size={12}/> {file.name}</span>
+          <span className="font-mono text-indigo-400 flex items-center gap-2">
+            <Code2 size={12}/> {file.name} 
+            {file.subtype && <span className="bg-[#333] px-1 rounded text-[10px] text-slate-300 uppercase">{file.subtype}</span>}
+          </span>
           <button onClick={onRun} className="flex items-center gap-1 px-3 py-1 bg-green-700 hover:bg-green-600 text-white rounded-sm transition-colors font-semibold">
-            <Play size={10} fill="currentColor"/> Run Script
+            <Play size={10} fill="currentColor"/> Run
           </button>
       </div>
       <div className="flex-1 relative">
@@ -157,72 +165,95 @@ const CodeEditor = ({ file, onChange, onRun }: any) => (
   </div>
 );
 
+// High-Fidelity Google Docs Clone
 const DocEditor = ({ file, onChange }: any) => (
-  <div className="flex flex-col h-full bg-[#f0f0f0] overflow-y-auto items-center p-8">
-       <div className="w-full max-w-[850px] bg-white min-h-[1100px] shadow-sm border border-slate-200 p-[72px] text-slate-900">
-           <div className="mb-4">
-               <input 
-                  value={file.name.replace('.doc', '')}
-                  onChange={(e) => { /* Rename logic */ }}
-                  className="text-3xl font-bold w-full outline-none placeholder-slate-300 font-serif"
-                  placeholder="Untitled Research"
-               />
-               <div className="text-sm text-slate-400 mt-1 font-serif italic">Last edit: Just now</div>
+  <div className="flex flex-col h-full bg-[#F9FBFD] overflow-y-auto items-center relative">
+       {/* Toolbar Simulator */}
+       <div className="w-full bg-[#EDF2FA] border-b border-[#dadce0] px-4 py-2 flex gap-4 text-slate-700 sticky top-0 z-10 shadow-sm">
+           <div className="flex gap-2 items-center text-sm font-medium">
+               <span className="hover:bg-[rgba(26,115,232,0.1)] px-2 py-1 rounded cursor-pointer">File</span>
+               <span className="hover:bg-[rgba(26,115,232,0.1)] px-2 py-1 rounded cursor-pointer">Edit</span>
+               <span className="hover:bg-[rgba(26,115,232,0.1)] px-2 py-1 rounded cursor-pointer">View</span>
+               <span className="hover:bg-[rgba(26,115,232,0.1)] px-2 py-1 rounded cursor-pointer">Insert</span>
+               <span className="hover:bg-[rgba(26,115,232,0.1)] px-2 py-1 rounded cursor-pointer">Format</span>
            </div>
+       </div>
+       
+       {/* Paper */}
+       <div className="w-[816px] min-h-[1056px] bg-white shadow-lg my-8 p-[96px] text-black">
+           <input 
+              value={file.name.replace(/\.(doc|txt)$/, '')}
+              onChange={(e) => { /* Rename logic could go here */ }}
+              className="text-3xl font-bold w-full outline-none placeholder-slate-300 font-sans mb-4 text-black bg-transparent"
+              placeholder="Untitled Document"
+           />
            <textarea 
               value={file.content}
               onChange={(e) => onChange(e.target.value)}
-              className="w-full h-full min-h-[900px] text-[11pt] resize-none focus:outline-none font-serif leading-relaxed"
-              placeholder="Begin typing your research..."
+              className="w-full h-full min-h-[800px] text-[11pt] resize-none focus:outline-none font-sans leading-relaxed text-black placeholder-slate-400"
+              placeholder="Type @ to insert"
            />
        </div>
   </div>
 );
 
+// High-Fidelity Google Slides Clone
 const SlideEditor = ({ file, onChange }: any) => (
-    <div className="flex flex-col h-full bg-[#f8f9fa] overflow-hidden">
-        <div className="flex-1 flex items-center justify-center p-8">
-            <div className="aspect-[16/9] h-[80%] bg-white shadow-xl flex flex-col p-12 border border-slate-200">
-                <input 
-                   className="text-4xl font-bold mb-8 outline-none placeholder-slate-300" 
-                   placeholder="Click to add title"
-                   value={file.content.split('\n')[0] || ''}
-                   onChange={(e) => {
-                       const lines = file.content.split('\n');
-                       lines[0] = e.target.value;
-                       onChange(lines.join('\n'));
-                   }}
-                />
-                <textarea 
-                    className="flex-1 text-2xl resize-none outline-none placeholder-slate-200"
-                    placeholder="Click to add subtitle"
-                    value={file.content.split('\n').slice(1).join('\n')}
-                    onChange={(e) => {
-                        const lines = file.content.split('\n');
-                        const rest = e.target.value;
-                        onChange(lines[0] + '\n' + rest);
-                    }}
-                />
-            </div>
+    <div className="flex flex-col h-full bg-[#F8F9FA] overflow-hidden">
+        {/* Toolbar */}
+        <div className="w-full bg-white border-b border-[#dadce0] px-4 py-2 flex gap-2 items-center text-slate-600">
+           <Plus size={18} className="cursor-pointer hover:bg-slate-100 p-1 rounded box-content"/>
+           <div className="h-4 w-px bg-slate-300 mx-2"></div>
+           <span className="text-xs">Background</span>
+           <span className="text-xs">Layout</span>
+           <span className="text-xs">Theme</span>
         </div>
-        <div className="h-40 bg-white border-t flex items-center px-4 gap-4 overflow-x-auto">
-            {[1,2,3].map(i => (
-                <div key={i} className="aspect-[16/9] h-24 bg-slate-100 border hover:border-orange-500 cursor-pointer flex items-center justify-center text-slate-400">
-                    Slide {i}
+
+        <div className="flex-1 flex overflow-hidden">
+             {/* Filmstrip */}
+             <div className="w-48 bg-white border-r border-[#dadce0] flex flex-col p-4 gap-4 overflow-y-auto">
+                 {[1].map(i => (
+                     <div key={i} className="aspect-[16/9] bg-white border-2 border-[#Fbbc04] shadow-sm flex items-center justify-center text-[10px] text-slate-400 cursor-pointer">
+                         1
+                     </div>
+                 ))}
+             </div>
+
+             {/* Canvas */}
+             <div className="flex-1 bg-[#F8F9FA] flex items-center justify-center p-8 overflow-auto">
+                <div className="w-[960px] h-[540px] bg-white shadow-lg flex flex-col p-16 border border-[#dadce0] relative">
+                    <input 
+                       className="text-5xl font-sans font-bold mb-8 outline-none placeholder-[#dadce0] text-black bg-transparent text-center mt-20" 
+                       placeholder="Click to add title"
+                       value={file.content.split('\n')[0] || ''}
+                       onChange={(e) => {
+                           const lines = file.content.split('\n');
+                           lines[0] = e.target.value;
+                           onChange(lines.join('\n'));
+                       }}
+                    />
+                    <textarea 
+                        className="flex-1 text-2xl font-sans resize-none outline-none placeholder-[#dadce0] text-black bg-transparent text-center"
+                        placeholder="Click to add subtitle"
+                        value={file.content.split('\n').slice(1).join('\n')}
+                        onChange={(e) => {
+                            const lines = file.content.split('\n');
+                            const rest = e.target.value;
+                            onChange(lines[0] + '\n' + rest);
+                        }}
+                    />
                 </div>
-            ))}
-            <div className="h-24 aspect-[16/9] border-2 border-dashed flex items-center justify-center text-slate-300 cursor-pointer hover:bg-slate-50">
-                <Plus size={24}/>
-            </div>
+             </div>
         </div>
     </div>
 );
 
+// High-Fidelity Google Sheets Clone
 const SheetEditor = ({ file, onChange }: any) => {
   const rows = file.content.split('\n').map((row: string) => row.split(','));
   const ensureGrid = () => {
-    while(rows.length < 50) rows.push(new Array(10).fill(''));
-    rows.forEach((r: any[]) => { while(r.length < 20) r.push(''); });
+    while(rows.length < 40) rows.push(new Array(10).fill(''));
+    rows.forEach((r: any[]) => { while(r.length < 15) r.push(''); });
     return rows;
   };
   const grid = ensureGrid();
@@ -234,12 +265,22 @@ const SheetEditor = ({ file, onChange }: any) => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-white overflow-hidden">
-        <div className="flex border-b">
-             <div className="w-10 bg-slate-50 border-r flex items-center justify-center text-xs text-slate-400">#</div>
+    <div className="flex flex-col h-full bg-white overflow-hidden font-sans text-xs">
+        <div className="w-full bg-[#f8f9fa] border-b border-[#c0c0c0] px-4 py-1 flex gap-4 text-slate-700 items-center h-8">
+            <span className="font-bold text-[#107c41] flex items-center gap-1"><Table size={14}/> Sheets</span>
+            <div className="h-4 w-px bg-slate-300"></div>
+            <div className="flex gap-2">
+                <span className="font-bold">B</span>
+                <span className="italic font-serif">I</span>
+                <span className="line-through">S</span>
+                <span className="text-[#1a73e8]">A</span>
+            </div>
+        </div>
+        <div className="flex items-center h-6 bg-[#f8f9fa] border-b border-[#c0c0c0]">
+             <div className="w-10 bg-[#f8f9fa] border-r border-[#c0c0c0]"></div>
              <div className="flex-1 flex overflow-hidden">
                 {grid[0].map((_: any, i: number) => (
-                   <div key={i} className="min-w-[100px] bg-slate-50 border-r text-center text-xs font-bold text-slate-600 py-1 flex items-center justify-center">
+                   <div key={i} className="min-w-[100px] bg-[#f8f9fa] border-r border-[#c0c0c0] text-center font-bold text-slate-600 py-1 flex items-center justify-center">
                      {String.fromCharCode(65 + i)}
                    </div>
                 ))}
@@ -247,14 +288,14 @@ const SheetEditor = ({ file, onChange }: any) => {
         </div>
         <div className="flex-1 overflow-auto">
           {grid.map((row: any[], r: number) => (
-            <div key={r} className="flex h-8 border-b">
-               <div className="w-10 min-w-[40px] bg-slate-50 border-r text-center text-xs text-slate-500 flex items-center justify-center">{r + 1}</div>
+            <div key={r} className="flex h-6 border-b border-[#e0e0e0]">
+               <div className="w-10 min-w-[40px] bg-[#f8f9fa] border-r border-[#c0c0c0] text-center text-slate-500 flex items-center justify-center font-semibold">{r + 1}</div>
                {row.map((cell: string, c: number) => (
                   <input 
                     key={`${r}-${c}`}
                     value={cell}
                     onChange={(e) => handleCellChange(r, c, e.target.value)}
-                    className="min-w-[100px] border-r px-2 text-sm focus:outline-none focus:border-green-500 focus:ring-1 focus:ring-green-500"
+                    className="min-w-[100px] border-r border-[#e0e0e0] px-1 focus:outline-none focus:border-[#1a73e8] focus:ring-2 focus:ring-[#1a73e8] text-black z-0 focus:z-10"
                   />
                ))}
             </div>
@@ -338,6 +379,73 @@ const WhiteboardEditor = ({ file, onChange }: any) => {
   );
 };
 
+const SearchEditor = ({ file, onChange, apiKey }: any) => {
+    const [query, setQuery] = useState('');
+    const [results, setResults] = useState<string>(file.content || '');
+    const [searching, setSearching] = useState(false);
+
+    const handleSearch = async () => {
+        if(!query || !apiKey) return;
+        setSearching(true);
+        try {
+            const ai = new GoogleGenAI({ apiKey });
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash',
+                contents: `Search query: ${query}`,
+                config: { tools: [{googleSearch: {}}] }
+            });
+            const text = response.text || "No results found.";
+            const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks || [];
+            
+            let formatted = `## Search Results for: "${query}"\n\n${text}\n\n### Sources:\n`;
+            chunks.forEach((chunk: any, i: number) => {
+                if(chunk.web?.uri) {
+                    formatted += `${i+1}. [${chunk.web.title}](${chunk.web.uri})\n`;
+                }
+            });
+
+            setResults(formatted);
+            onChange(formatted);
+        } catch(e: any) {
+            setResults(`Error: ${e.message}`);
+        } finally {
+            setSearching(false);
+        }
+    };
+
+    return (
+        <div className="flex flex-col h-full bg-white p-8 overflow-y-auto">
+            <div className="max-w-3xl mx-auto w-full">
+                <div className="flex items-center gap-4 mb-8">
+                    <div className="p-3 bg-blue-100 rounded-full text-blue-600"><Globe size={24}/></div>
+                    <h1 className="text-2xl font-bold text-slate-800">Deep Search Grounding</h1>
+                </div>
+                
+                <div className="flex gap-2 mb-8">
+                    <input 
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                        placeholder="Search for research papers, topics, or data..."
+                        className="flex-1 px-4 py-3 border border-slate-300 rounded-lg focus:outline-none focus:border-blue-500 shadow-sm text-black"
+                    />
+                    <button 
+                        onClick={handleSearch}
+                        disabled={searching}
+                        className="px-6 py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                    >
+                        {searching ? 'Searching...' : 'Search'}
+                    </button>
+                </div>
+
+                <div className="prose prose-slate max-w-none">
+                     <ReactMarkdown remarkPlugins={[remarkGfm]}>{results}</ReactMarkdown>
+                </div>
+            </div>
+        </div>
+    )
+}
+
 
 // --- Main App ---
 
@@ -350,6 +458,7 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string>('1');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isGoogleMenuOpen, setIsGoogleMenuOpen] = useState(false);
+  const [isDevMenuOpen, setIsDevMenuOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentSpecialist, setCurrentSpecialist] = useState("The Liaison");
   const [terminalOutput, setTerminalOutput] = useState<TerminalOutput[]>([]);
@@ -365,17 +474,24 @@ export default function App() {
     setTerminalOutput(prev => [...prev, { id: Math.random().toString(), content, type, timestamp: Date.now() }]);
   };
 
-  const createNewFile = (type: FileType, name?: string, content: string = '') => {
+  const createNewFile = (type: FileType, subtype?: 'python' | 'cpp' | 'matlab', name?: string, content: string = '') => {
     const newId = Math.random().toString(36).substr(2, 9);
     const extensions: Record<string, string> = { 
-        code: 'py', doc: 'doc', sheet: 'csv', whiteboard: 'board', chat: 'chat', slide: 'slide', note: 'txt' 
+        code: subtype === 'python' ? 'py' : subtype === 'cpp' ? 'cpp' : subtype === 'matlab' ? 'm' : 'code', 
+        doc: 'doc', 
+        sheet: 'csv', 
+        whiteboard: 'board', 
+        chat: 'chat', 
+        slide: 'slide', 
+        note: 'txt',
+        search: 'search'
     };
     const fileName = name || `Untitled.${extensions[type]}`;
     
     const initialContent = content || (
         type === 'sheet' ? 'Header 1,Header 2,Header 3\nData 1,Data 2,Data 3' : 
         type === 'chat' ? '[]' : 
-        type === 'code' ? '# New Script' : 
+        type === 'code' ? (subtype === 'python' ? '# Python Script\nprint("Hello World")' : subtype === 'cpp' ? '// C++ Source\n#include <iostream>\n' : '% MATLAB Script\n') : 
         type === 'slide' ? 'Title Slide\nSubtitle goes here' : ''
     );
 
@@ -383,12 +499,14 @@ export default function App() {
       id: newId,
       name: fileName,
       type,
+      subtype,
       content: initialContent
     };
     setFiles(prev => [...prev, newFile]);
     setOpenTabIds(prev => [...prev, newId]);
     setActiveTabId(newId);
     setIsGoogleMenuOpen(false); // Close menu if open
+    setIsDevMenuOpen(false);
     return newId;
   };
 
@@ -455,7 +573,7 @@ export default function App() {
           const actionData = JSON.parse(match[1]);
           displayResponse = fullText.replace(jsonBlockRegex, '').trim();
           if (actionData.action === 'create_file') {
-            createNewFile(actionData.file_type, actionData.file_name, actionData.content);
+            createNewFile(actionData.file_type, undefined, actionData.file_name, actionData.content);
           } else if (actionData.action === 'update_file') {
              const target = files.find(f => f.name === actionData.file_name || f.id === actionData.file_id);
              if (target) updateFileContent(target.id, actionData.content);
@@ -482,7 +600,7 @@ export default function App() {
             {history.length === 0 && (
                 <div className="flex flex-col items-center justify-center mt-32 text-[#444]">
                     <Bot size={72} strokeWidth={1} />
-                    <h2 className="text-2xl font-light tracking-widest mt-6 uppercase">OmniScience v2.1</h2>
+                    <h2 className="text-2xl font-light tracking-widest mt-6 uppercase">OmniScience v2.2</h2>
                     <p className="text-sm mt-2">Ready for inquiry.</p>
                 </div>
             )}
@@ -500,9 +618,9 @@ export default function App() {
                         <ReactMarkdown 
                             remarkPlugins={[remarkGfm]}
                             components={{
-                                table: ({node, ...props}) => <table className="border-collapse border border-slate-700 my-4 text-xs w-full" {...props} />,
-                                th: ({node, ...props}) => <th className="border border-slate-700 bg-[#252526] p-2 text-left text-slate-200 font-semibold" {...props} />,
-                                td: ({node, ...props}) => <td className="border border-slate-700 p-2 text-slate-400" {...props} />,
+                                table: ({node, ...props}) => <table className="border-collapse border border-slate-700 my-4 text-xs w-full bg-[#252526]" {...props} />,
+                                th: ({node, ...props}) => <th className="border border-slate-600 bg-[#333] p-2 text-left text-white font-semibold" {...props} />,
+                                td: ({node, ...props}) => <td className="border border-slate-600 p-2 text-slate-300" {...props} />,
                                 p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />,
                                 ul: ({node, ...props}) => <ul className="list-disc ml-4 mb-2" {...props} />,
                                 ol: ({node, ...props}) => <ol className="list-decimal ml-4 mb-2" {...props} />,
@@ -583,7 +701,8 @@ export default function App() {
                                          f.type === 'doc' ? FileText : 
                                          f.type === 'whiteboard' ? PenTool : 
                                          f.type === 'sheet' ? Table : 
-                                         f.type === 'slide' ? Presentation : StickyNote
+                                         f.type === 'slide' ? Presentation : 
+                                         f.type === 'search' ? Globe : StickyNote
                                      } 
                                      fileType={f.type}
                                      label={f.name} 
@@ -625,12 +744,45 @@ export default function App() {
                              <button onClick={() => createNewFile('note')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-yellow-400">
                                  <StickyNote size={20}/> Keep
                              </button>
-                             <button onClick={() => createNewFile('chat')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-indigo-400">
-                                 <Bot size={20}/> Assistant
+                         </div>
+                     )}
+                 </div>
+
+                 {/* Development Menu */}
+                 <div className="mt-2 px-3">
+                     <button 
+                        onClick={() => setIsDevMenuOpen(!isDevMenuOpen)}
+                        className="w-full flex items-center justify-between px-3 py-2 bg-[#007acc] hover:bg-[#0062a3] text-white rounded-sm text-xs font-semibold shadow-sm transition-colors"
+                     >
+                         <span className="flex items-center gap-2"><Binary size={14}/> Development</span>
+                         {isDevMenuOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+                     </button>
+                     
+                     {isDevMenuOpen && (
+                         <div className="mt-2 grid grid-cols-3 gap-2 pl-2 border-l border-[#333] ml-2">
+                             <button onClick={() => createNewFile('code', 'python')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-yellow-300">
+                                 <Box size={16}/> Python
+                             </button>
+                             <button onClick={() => createNewFile('code', 'cpp')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-blue-500">
+                                 <Cpu size={16}/> C++
+                             </button>
+                             <button onClick={() => createNewFile('code', 'matlab')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-orange-600">
+                                 <Variable size={16}/> MATLAB
                              </button>
                          </div>
                      )}
                  </div>
+                 
+                 {/* Google Search Button */}
+                 <div className="mt-4 px-3">
+                     <button 
+                        onClick={() => createNewFile('search', undefined, 'Google Search')}
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#4285F4] hover:bg-[#3367d6] text-white rounded-sm text-xs font-semibold shadow-sm transition-colors"
+                     >
+                         <Search size={14}/> Deep Search
+                     </button>
+                 </div>
+
              </div>
          )}
          
@@ -700,6 +852,13 @@ export default function App() {
                          {activeFile.type === 'slide' && (
                             <SlideEditor 
                                 file={activeFile} 
+                                onChange={(val: string) => updateFileContent(activeFile.id, val)}
+                            />
+                        )}
+                        {activeFile.type === 'search' && (
+                            <SearchEditor
+                                file={activeFile}
+                                apiKey={apiKey}
                                 onChange={(val: string) => updateFileContent(activeFile.id, val)}
                             />
                         )}
