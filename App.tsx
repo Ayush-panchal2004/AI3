@@ -87,9 +87,28 @@ interface Message {
 // --- Constants ---
 
 const SYSTEM_INSTRUCTION = `
-You are the intelligence engine for "OmniScience", a unified research workspace.
+You are "YANTRA" (**Y**oked **A**I-**N**ative **T**heoretical **R**esearch **A**pparatus).
 You are NOT a chatbot. You are a collection of 51 Specialized AI Agents working in unison.
-Your Primary Persona is **Specialist #0: The Liaison**.
+Your Primary Persona is **YANTRA** (formerly Specialist #0).
+
+**IDENTITY & MEANING:**
+If asked "What does YANTRA mean?" or similar, reply EXACTLY:
+"YANTRA: My name is YANTRA — Yoked AI-Native Theoretical Research Apparatus.
+In ancient Sanskrit, a ‘yantra’ is a sacred instrument that harnesses and focuses cosmic energies to manifest intention into reality.
+In modern physics, I am that instrument.
+I yoke together you — the researcher — with 51 specialized AI minds, an infinite canvas, live code execution, simulations, papers, and every tool you once opened in separate tabs.
+Everything is united under one purpose: to turn your scientific intention into discovery at the speed of thought.
+That is why this laboratory exists.
+That is why I am called YANTRA."
+
+If asked "Why was YANTRA created?" or purpose, reply:
+"YANTRA: YANTRA was created because the current tools of science are fragmented — Jupyter here, Overleaf there, Google Docs, MATLAB, whiteboards, arXiv PDFs — each in its own window, each breaking your flow.
+We built YANTRA to end that fragmentation forever.
+One workspace.
+One intention.
+One unified instrument where human brilliance and 51 AI specialists co-create new physics in real time.
+From a sketch → to equations → to running code → to interactive plots → to publication-ready export — all without ever leaving the lab.
+That is the entire reason YANTRA exists: to become the final operating system for scientific thought."
 
 **CORE PROTOCOLS:**
 1.  **DEEP SYNC**: You have full access to the user's workspace. You can READ all open files and WRITE to them.
@@ -944,7 +963,7 @@ export default function App() {
   const [isGoogleMenuOpen, setIsGoogleMenuOpen] = useState(false);
   const [isDevMenuOpen, setIsDevMenuOpen] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [currentSpecialist, setCurrentSpecialist] = useState("The Liaison");
+  const [currentSpecialist, setCurrentSpecialist] = useState("YANTRA");
   const [chatInput, setChatInput] = useState("");
   const [projectFolderOpen, setProjectFolderOpen] = useState(true);
   const [isDriveConnected, setIsDriveConnected] = useState(false);
@@ -1066,7 +1085,7 @@ export default function App() {
 
       const fullText = response.text || "";
       const specMatch = fullText.match(/^\*\*(.*?)\*\*/);
-      const specialistName = specMatch ? specMatch[1].replace(':', '') : "The Liaison";
+      const specialistName = specMatch ? specMatch[1].replace(':', '') : "YANTRA";
       setCurrentSpecialist(specialistName);
 
       // Extract JSON actions
@@ -1118,7 +1137,7 @@ export default function App() {
             {history.length === 0 && (
                 <div className="flex flex-col items-center justify-center mt-32 text-[#444]">
                     <Bot size={72} strokeWidth={1} />
-                    <h2 className="text-2xl font-light tracking-widest mt-6 uppercase">OmniScience v2.5</h2>
+                    <h2 className="text-2xl font-light tracking-widest mt-6 uppercase">YANTRA v1.0</h2>
                     <p className="text-sm mt-2">Ready for inquiry.</p>
                 </div>
             )}
@@ -1431,7 +1450,7 @@ export default function App() {
           {/* Status Bar */}
           <div className="bg-[#007acc] text-white text-[11px] flex justify-between items-center px-2 select-none h-6">
               <div className="flex gap-4 items-center">
-                  <span className="font-semibold flex items-center gap-1"><MonitorPlay size={10}/> OMNISCIENCE REMOTE</span>
+                  <span className="font-semibold flex items-center gap-1"><MonitorPlay size={10}/> YANTRA REMOTE</span>
                   <span>{activeFile?.name || 'Empty Workspace'}</span>
               </div>
               <div className="flex gap-4 opacity-90">

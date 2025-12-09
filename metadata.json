@@ -1,6 +1,6 @@
 {
-  "name": "OmniScience v2.0",
-  "description": "Integrated AI Research Environment with Live File Synchronization.",
+  "name": "YANTRA",
+  "description": "Yoked AI-Native Theoretical Research Apparatus. The final operating system for scientific thought.",
   "requestFramePermissions": [
     "microphone"
   ]
