@@ -64,8 +64,9 @@ type FileType = 'chat' | 'code' | 'doc' | 'whiteboard' | 'sheet' | 'slide' | 'no
 
 interface TerminalOutput {
   id: string;
-  type: 'info' | 'error' | 'success' | 'output';
+  type: 'info' | 'error' | 'success' | 'output' | 'image';
   content: string;
+  imageSrc?: string;
   timestamp: number;
 }
 
@@ -115,17 +116,19 @@ That is the entire reason YANTRA exists: to become the final operating system fo
 1.  **DEEP SYNC**: You have full access to the user's workspace. You can READ all open files and WRITE to them.
 2.  **ACTION OVER CHAT**: If the user asks for a summary, paper, or code, DO NOT just dump it in the chat. CREATE A FILE or UPDATE THE ACTIVE FILE.
 3.  **SPECIALIST DELEGATION**: Explicitly state which specialist is acting.
+4.  **IMAGE GENERATION**: If the user asks to generate an image/visual, use the "generate_image" action.
 
 **FILE MANIPULATION COMMANDS:**
 To perform actions, you must include a JSON block at the END of your response.
 Format:
 \`\`\`json
 {
-  "action": "create_file" | "update_file" | "switch_tab",
+  "action": "create_file" | "update_file" | "switch_tab" | "generate_image",
   "file_id": "optional_id_if_update",
   "file_type": "doc" | "code" | "sheet" | "whiteboard" | "slide",
   "file_name": "filename.ext",
-  "content": "The actual content..."
+  "content": "The actual content...",
+  "prompt": "Detailed prompt for image generation (only for generate_image)"
 }
 \`\`\`
 
@@ -139,7 +142,7 @@ Format:
 
 const SidebarItem = ({ icon: Icon, label, onClick, active, fileType, subIcon }: any) => (
   <div 
-    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-sm text-sm transition-colors group relative cursor-pointer select-none ${active ? 'bg-[#37373d] text-white' : 'text-[#cccccc] hover:bg-[#2a2d2e]'}`}
+    className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors group relative cursor-pointer select-none ${active ? 'bg-[#37373d] text-white' : 'text-[#cccccc] hover:bg-[#2a2d2e]'}`}
     onClick={onClick}
   >
     <div className="relative">
@@ -215,7 +218,7 @@ const MenuBar = ({ onAction, isDriveConnected }: { onAction: (action: string, va
       {Object.entries(menus).map(([name, items]) => (
         <div key={name} className="relative group">
           <button 
-            className="px-2 py-1 hover:bg-slate-200 rounded-sm text-slate-800 text-sm"
+            className="px-2 py-1 hover:bg-slate-200 rounded-md text-slate-800 text-sm"
             onClick={() => setActiveMenu(activeMenu === name ? null : name)}
             onMouseEnter={() => activeMenu && setActiveMenu(name)}
             onMouseDown={(e) => e.preventDefault()}
@@ -224,7 +227,7 @@ const MenuBar = ({ onAction, isDriveConnected }: { onAction: (action: string, va
           </button>
           {activeMenu === name && (
             <div 
-              className="absolute left-0 top-full bg-white shadow-xl border border-slate-200 rounded py-1 min-w-[180px] z-50 flex flex-col"
+              className="absolute left-0 top-full bg-white shadow-xl border border-slate-200 rounded-md py-1 min-w-[180px] z-50 flex flex-col"
               onMouseLeave={() => setActiveMenu(null)}
             >
               {items.map(item => (
@@ -329,7 +332,7 @@ const AssistantPanel = ({ file, apiKey, onApply, onClose }: { file: VirtualFile,
               )}
               {messages.map((m, i) => (
                   <div key={i} className={`flex flex-col gap-1 ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
-                      <div className={`text-xs p-2 rounded max-w-[90%] ${m.role === 'user' ? 'bg-indigo-900 text-white' : 'bg-[#333] text-slate-300'}`}>
+                      <div className={`text-xs p-2 rounded-md max-w-[90%] ${m.role === 'user' ? 'bg-indigo-900 text-white' : 'bg-[#333] text-slate-300'}`}>
                           <ReactMarkdown>{m.text}</ReactMarkdown>
                       </div>
                       {m.role === 'model' && (
@@ -352,9 +355,9 @@ const AssistantPanel = ({ file, apiKey, onApply, onClose }: { file: VirtualFile,
                       onChange={e => setInput(e.target.value)}
                       onKeyDown={e => e.key === 'Enter' && handleSend()}
                       placeholder={`Edit ${file.type}...`}
-                      className="flex-1 bg-[#252526] text-xs text-white px-2 py-1.5 rounded border border-[#333] focus:border-indigo-500 outline-none"
+                      className="flex-1 bg-[#252526] text-xs text-white px-2 py-1.5 rounded-md border border-[#333] focus:border-indigo-500 outline-none"
                   />
-                  <button onClick={handleSend} className="bg-indigo-600 p-1.5 rounded text-white hover:bg-indigo-500"><Play size={12}/></button>
+                  <button onClick={handleSend} className="bg-indigo-600 p-1.5 rounded-md text-white hover:bg-indigo-500"><Play size={12}/></button>
               </div>
           </div>
       </div>
@@ -376,16 +379,16 @@ const CodeEditor = ({ file, onChange, onRun, onRename, apiKey }: any) => {
                     <input 
                         value={file.name}
                         onChange={(e) => onRename(e.target.value)}
-                        className="bg-transparent border-b border-transparent hover:border-slate-500 focus:border-indigo-500 focus:outline-none text-slate-300 w-32"
+                        className="bg-transparent border-b border-transparent hover:border-slate-500 focus:border-indigo-500 focus:outline-none text-slate-300 w-32 rounded-md"
                     />
                 </span>
-                {file.subtype && <span className="bg-[#333] px-1 rounded text-[10px] text-slate-300 uppercase">{file.subtype}</span>}
+                {file.subtype && <span className="bg-[#333] px-1 rounded-md text-[10px] text-slate-300 uppercase">{file.subtype}</span>}
               </div>
               <div className="flex items-center gap-2">
-                  <button onClick={onRun} className="flex items-center gap-1 px-3 py-1 bg-green-700 hover:bg-green-600 text-white rounded-sm transition-colors font-semibold">
+                  <button onClick={onRun} className="flex items-center gap-1 px-3 py-1 bg-green-700 hover:bg-green-600 text-white rounded-md transition-colors font-semibold">
                     <Play size={10} fill="currentColor"/> Run
                   </button>
-                  <button onClick={() => setShowAssistant(!showAssistant)} className={`p-1 rounded transition-colors ${showAssistant ? 'bg-indigo-600 text-white' : 'hover:bg-[#333] text-slate-400'}`}>
+                  <button onClick={() => setShowAssistant(!showAssistant)} className={`p-1 rounded-md transition-colors ${showAssistant ? 'bg-indigo-600 text-white' : 'hover:bg-[#333] text-slate-400'}`}>
                       <Sparkles size={14}/>
                   </button>
               </div>
@@ -512,7 +515,7 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
                       <input 
                         value={file.name}
                         onChange={(e) => onRename(e.target.value)}
-                        className="bg-transparent text-slate-800 text-lg hover:border border-slate-300 px-1 rounded truncate max-w-[300px] focus:outline-none focus:border-[#4285F4] border border-transparent"
+                        className="bg-transparent text-slate-800 text-lg hover:border border-slate-300 px-1 rounded-md truncate max-w-[300px] focus:outline-none focus:border-[#4285F4] border border-transparent"
                       />
                       <MenuBar onAction={handleAction} isDriveConnected={isDriveConnected}/>
                   </div>
@@ -564,9 +567,9 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
                </div>
                <div className="w-px h-4 bg-slate-300"></div>
                <div className="flex items-center gap-1">
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('bold')} className="p-1 hover:bg-slate-200 rounded" title="Bold"><Bold size={14}/></button>
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('italic')} className="p-1 hover:bg-slate-200 rounded" title="Italic"><Italic size={14}/></button>
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('underline')} className="p-1 hover:bg-slate-200 rounded" title="Underline"><Underline size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('bold')} className="p-1 hover:bg-slate-200 rounded-md" title="Bold"><Bold size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('italic')} className="p-1 hover:bg-slate-200 rounded-md" title="Italic"><Italic size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('underline')} className="p-1 hover:bg-slate-200 rounded-md" title="Underline"><Underline size={14}/></button>
                    <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
                        <Type size={14} className="text-slate-500"/>
                        <input type="color" onMouseDown={(e) => e.preventDefault()} onChange={(e) => exec('foreColor', e.target.value)} className="w-4 h-4 border-none bg-transparent cursor-pointer"/>
@@ -574,9 +577,9 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
                </div>
                <div className="w-px h-4 bg-slate-300"></div>
                <div className="flex items-center gap-1">
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyLeft')} className="p-1 hover:bg-slate-200 rounded"><AlignLeft size={14}/></button>
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyCenter')} className="p-1 hover:bg-slate-200 rounded"><AlignCenter size={14}/></button>
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyRight')} className="p-1 hover:bg-slate-200 rounded"><AlignRight size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyLeft')} className="p-1 hover:bg-slate-200 rounded-md"><AlignLeft size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyCenter')} className="p-1 hover:bg-slate-200 rounded-md"><AlignCenter size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyRight')} className="p-1 hover:bg-slate-200 rounded-md"><AlignRight size={14}/></button>
                </div>
            </div>
        </div>
@@ -914,7 +917,7 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                         <input 
                             value={file.name}
                             onChange={(e) => onRename(e.target.value)}
-                            className="bg-transparent text-slate-800 text-lg hover:border border-slate-300 px-1 rounded truncate max-w-[300px] focus:outline-none focus:border-[#107c41] border border-transparent"
+                            className="bg-transparent text-slate-800 text-lg hover:border border-slate-300 px-1 rounded-md truncate max-w-[300px] focus:outline-none focus:border-[#107c41] border border-transparent"
                         />
                         <MenuBar onAction={handleAction} isDriveConnected={isDriveConnected}/>
                     </div>
@@ -926,9 +929,9 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
              {/* Toolbar */}
            <div className="flex items-center gap-2 bg-[#EDF2FA] rounded-full px-4 py-1.5 w-max mt-1 shadow-sm border border-slate-200">
                <div className="flex items-center gap-1">
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleStyle('fontWeight', 'bold')} className={`p-1 hover:bg-slate-200 rounded`}><Bold size={14}/></button>
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleStyle('fontStyle', 'italic')} className={`p-1 hover:bg-slate-200 rounded`}><Italic size={14}/></button>
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleStyle('textDecoration', 'underline')} className={`p-1 hover:bg-slate-200 rounded`}><Underline size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleStyle('fontWeight', 'bold')} className={`p-1 hover:bg-slate-200 rounded-md`}><Bold size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleStyle('fontStyle', 'italic')} className={`p-1 hover:bg-slate-200 rounded-md`}><Italic size={14}/></button>
+                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleStyle('textDecoration', 'underline')} className={`p-1 hover:bg-slate-200 rounded-md`}><Underline size={14}/></button>
                    <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
                        <Type size={14} className="text-slate-500"/>
                        <input type="color" onMouseDown={(e) => e.preventDefault()} onChange={(e) => toggleStyle('color', e.target.value)} className="w-4 h-4 border-none bg-transparent cursor-pointer"/>
@@ -1147,7 +1150,7 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                             <input 
                                 value={file.name}
                                 onChange={(e) => onRename(e.target.value)}
-                                className="bg-transparent text-slate-800 text-lg hover:border border-slate-300 px-1 rounded truncate max-w-[300px] focus:outline-none focus:border-[#Fbbc04] border border-transparent"
+                                className="bg-transparent text-slate-800 text-lg hover:border border-slate-300 px-1 rounded-md truncate max-w-[300px] focus:outline-none focus:border-[#Fbbc04] border border-transparent"
                             />
                            <MenuBar onAction={handleAction} isDriveConnected={isDriveConnected}/>
                        </div>
@@ -1185,9 +1188,9 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                    </div>
                    <div className="w-px h-4 bg-slate-300"></div>
                    <div className="flex items-center gap-1">
-                       <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('bold')} className="p-1 hover:bg-slate-200 rounded" title="Bold"><Bold size={14}/></button>
-                       <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('italic')} className="p-1 hover:bg-slate-200 rounded" title="Italic"><Italic size={14}/></button>
-                       <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('underline')} className="p-1 hover:bg-slate-200 rounded" title="Underline"><Underline size={14}/></button>
+                       <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('bold')} className="p-1 hover:bg-slate-200 rounded-md" title="Bold"><Bold size={14}/></button>
+                       <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('italic')} className="p-1 hover:bg-slate-200 rounded-md" title="Italic"><Italic size={14}/></button>
+                       <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('underline')} className="p-1 hover:bg-slate-200 rounded-md" title="Underline"><Underline size={14}/></button>
                         <div className="flex items-center gap-1 border-l border-slate-300 pl-2">
                            <Type size={14} className="text-slate-500"/>
                            <input type="color" onMouseDown={(e) => e.preventDefault()} onChange={(e) => exec('foreColor', e.target.value)} className="w-4 h-4 border-none bg-transparent cursor-pointer"/>
@@ -1203,16 +1206,16 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                          <div 
                             key={i} 
                             onClick={() => setActiveSlideIndex(i)}
-                            className={`aspect-[16/9] bg-white border-2 shadow-sm flex flex-col p-2 cursor-pointer relative group transition-all ${activeSlideIndex === i ? 'border-[#Fbbc04] ring-2 ring-[#Fbbc04]/20' : 'border-slate-200 hover:border-slate-300'}`}
+                            className={`aspect-[16/9] bg-white border-2 shadow-sm flex flex-col p-2 cursor-pointer relative group transition-all rounded-md ${activeSlideIndex === i ? 'border-[#Fbbc04] ring-2 ring-[#Fbbc04]/20' : 'border-slate-200 hover:border-slate-300'}`}
                          >
-                             <div className="absolute top-1 left-1 text-[10px] font-bold text-slate-500 bg-white/80 px-1 rounded">{i + 1}</div>
+                             <div className="absolute top-1 left-1 text-[10px] font-bold text-slate-500 bg-white/80 px-1 rounded-md">{i + 1}</div>
                              <div className="text-[8px] font-bold truncate mt-4 pointer-events-none opacity-70" dangerouslySetInnerHTML={{__html: slide.title}}></div>
                              <div className="text-[6px] text-slate-400 overflow-hidden mt-1 pointer-events-none opacity-50 flex-1" dangerouslySetInnerHTML={{__html: slide.body}}></div>
                          </div>
                      ))}
                      <button 
                         onClick={addSlide}
-                        className="w-full py-3 border border-dashed border-slate-300 text-slate-500 rounded hover:bg-slate-50 hover:border-slate-400 text-xs font-semibold flex items-center justify-center gap-2"
+                        className="w-full py-3 border border-dashed border-slate-300 text-slate-500 rounded-md hover:bg-slate-50 hover:border-slate-400 text-xs font-semibold flex items-center justify-center gap-2"
                      >
                         <Plus size={14}/> New Slide
                      </button>
@@ -1301,15 +1304,15 @@ const WhiteboardEditor = ({ file, onChange, onRename }: any) => {
                  <input 
                     value={file.name}
                     onChange={(e) => onRename(e.target.value)}
-                    className="bg-transparent text-slate-800 font-semibold hover:border border-slate-300 px-1 rounded focus:outline-none"
+                    className="bg-transparent text-slate-800 font-semibold hover:border border-slate-300 px-1 rounded-md focus:outline-none"
                 />
             </div>
         </div>
         <div className="absolute top-16 left-4 bg-white shadow rounded-lg p-2 flex gap-2 z-10 border">
-             <button className="p-2 hover:bg-slate-100 rounded text-slate-600"><PenTool size={16}/></button>
-             <button className="p-2 hover:bg-slate-100 rounded text-slate-600"><Eraser size={16}/></button>
+             <button className="p-2 hover:bg-slate-100 rounded-md text-slate-600"><PenTool size={16}/></button>
+             <button className="p-2 hover:bg-slate-100 rounded-md text-slate-600"><Eraser size={16}/></button>
              <div className="w-px bg-slate-200"></div>
-             <button className="p-2 hover:bg-slate-100 rounded text-slate-600" onClick={() => {
+             <button className="p-2 hover:bg-slate-100 rounded-md text-slate-600" onClick={() => {
                  const ctx = canvasRef.current?.getContext('2d');
                  if(ctx) { ctx.fillStyle="#fff"; ctx.fillRect(0,0,2000,2000); save(); }
              }}>Clear</button>
@@ -1410,7 +1413,7 @@ const SearchEditor = ({ file, onChange, apiKey, onRename }: any) => {
 export default function App() {
   const [apiKey, setApiKey] = useState(process.env.API_KEY || '');
   const [files, setFiles] = useState<VirtualFile[]>([
-    { id: '1', name: 'MWI_Chat', type: 'chat', content: JSON.stringify([]), terminalHistory: [] },
+    { id: '1', name: 'Chat', type: 'chat', content: JSON.stringify([]), terminalHistory: [] },
   ]);
   const [openTabIds, setOpenTabIds] = useState<string[]>(['1']);
   const [activeTabId, setActiveTabId] = useState<string>('1');
@@ -1429,13 +1432,13 @@ export default function App() {
 
   // -- Helpers --
 
-  const addTerminalLog = (fileId: string, content: string, type: 'info' | 'error' | 'success' | 'output' = 'info') => {
+  const addTerminalLog = (fileId: string, content: string, type: 'info' | 'error' | 'success' | 'output' | 'image' = 'info', imageSrc?: string) => {
     setFiles(prev => prev.map(f => {
         if(f.id !== fileId) return f;
         const history = f.terminalHistory || [];
         return { 
             ...f, 
-            terminalHistory: [...history, { id: Math.random().toString(), content, type, timestamp: Date.now() }] 
+            terminalHistory: [...history, { id: Math.random().toString(), content, type, imageSrc, timestamp: Date.now() }] 
         };
     }));
   };
@@ -1493,18 +1496,52 @@ export default function App() {
   const runCode = async (code: string, fileName: string, subtype?: string, fileId?: string) => {
     if(!fileId) return;
     addTerminalLog(fileId, `> Executing ${fileName}...`, 'info');
-    try {
-      const ai = new GoogleGenAI({ apiKey });
-      let systemPrompt = `ACT AS A PYTHON INTERPRETER. Execute the code and return ONLY the output.`;
-      if (subtype === 'c') systemPrompt = `ACT AS A C COMPILER. Compile and run the following C code. Return ONLY the output of the program. DO NOT explain the code.`;
-      if (subtype === 'matlab') systemPrompt = `ACT AS A MATLAB CONSOLE. Execute the following MATLAB script and return ONLY the output.`;
+    
+    const ai = new GoogleGenAI({ apiKey });
 
-      const prompt = `${systemPrompt}\n\nCODE:\n${code}`;
-      const response = await ai.models.generateContent({
-        model: 'gemini-3-pro-preview',
-        contents: prompt
-      });
-      addTerminalLog(fileId, response.text || "No output", 'output');
+    // Parallel execution: Text output + Image (if plotting detected)
+    const promises = [];
+
+    // 1. Text Interpreter
+    let systemPrompt = `ACT AS A PYTHON INTERPRETER. Execute the code and return ONLY the output. Do not output object representations like '<Figure ...>'.`;
+    if (subtype === 'c') systemPrompt = `ACT AS A C COMPILER. Compile and run the following C code. Return ONLY the output of the program. DO NOT explain the code.`;
+    if (subtype === 'matlab') systemPrompt = `ACT AS A MATLAB CONSOLE. Execute the following MATLAB script and return ONLY the output.`;
+
+    promises.push(
+        ai.models.generateContent({
+            model: 'gemini-3-pro-preview',
+            contents: `${systemPrompt}\n\nCODE:\n${code}`
+        }).then(res => ({ type: 'output', val: res.text }))
+    );
+
+    // 2. Plot Generator (only for Python/MATLAB with plot keywords)
+    const isPlotting = (subtype === 'python' && (code.includes('matplotlib') || code.includes('plt.') || code.includes('seaborn'))) ||
+                       (subtype === 'matlab' && (code.includes('plot') || code.includes('imshow') || code.includes('figure')));
+
+    if (isPlotting) {
+         promises.push(
+            ai.models.generateContent({
+                model: 'gemini-3-pro-image-preview', // Switch to pro image preview for better plots
+                contents: `Generate a high-quality scientific chart/plot that represents the output of this code. Return ONLY the image.\n\nCODE:\n${code}`
+            }).then(res => {
+                 // Extract image
+                 for(const part of res.candidates?.[0]?.content?.parts || []) {
+                     if(part.inlineData) return { type: 'image', val: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}` };
+                 }
+                 return { type: 'info', val: "Plot generated but no image data returned." }; // Debug info
+            }).catch(e => ({ type: 'error', val: `Plot generation failed: ${e.message}` }))
+         );
+    }
+
+    try {
+        const results = await Promise.all(promises);
+        results.forEach(res => {
+            if(!res) return;
+            if(res.type === 'output') addTerminalLog(fileId, res.val || "No text output", 'output');
+            if(res.type === 'image' && res.val) addTerminalLog(fileId, "Generated Plot:", 'image', res.val);
+            if(res.type === 'info' && res.val) addTerminalLog(fileId, res.val, 'info');
+            if(res.type === 'error' && res.val) addTerminalLog(fileId, res.val, 'error');
+        });
     } catch (error: any) {
       addTerminalLog(fileId, `Execution failed: ${error.message}`, 'error');
     }
@@ -1553,11 +1590,31 @@ export default function App() {
         try {
           const actionData = JSON.parse(match[1]);
           displayResponse = fullText.replace(jsonBlockRegex, '').trim();
+          
           if (actionData.action === 'create_file') {
             createNewFile(actionData.file_type, undefined, actionData.file_name, actionData.content);
           } else if (actionData.action === 'update_file') {
              const target = files.find(f => f.name === actionData.file_name || f.id === actionData.file_id);
              if (target) updateFileContent(target.id, actionData.content);
+          } else if (actionData.action === 'generate_image') {
+              // Handle image generation
+              try {
+                  const imgRes = await ai.models.generateContent({
+                      model: 'gemini-3-pro-image-preview',
+                      contents: actionData.prompt || "Scientific visualization"
+                  });
+                  let imgData = "";
+                  for(const part of imgRes.candidates?.[0]?.content?.parts || []) {
+                      if(part.inlineData) imgData = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                  }
+                  if(imgData) {
+                      displayResponse += `\n\n![Generated Image](${imgData})`;
+                  } else {
+                      displayResponse += "\n\n*[System: Image generation failed to return data]*";
+                  }
+              } catch(e: any) {
+                  displayResponse += `\n\n*[System: Image generation error: ${e.message}]*`;
+              }
           }
         } catch (e) { console.error(e); }
       }
@@ -1639,7 +1696,7 @@ export default function App() {
             )}
             {history.map((msg, idx) => (
                 <div key={idx} className={`flex gap-4 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                    <div className={`w-8 h-8 rounded flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-[#2d2d2d] text-emerald-500'}`}>
+                    <div className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 text-[10px] font-bold ${msg.role === 'user' ? 'bg-indigo-600 text-white' : 'bg-[#2d2d2d] text-emerald-500'}`}>
                         {msg.role === 'user' ? 'USR' : 'AI'}
                     </div>
                     <div className={`max-w-[85%] text-sm leading-7 ${msg.role === 'user' ? 'bg-[#2b2b2b] p-3 rounded-lg text-slate-200' : 'text-slate-300'}`}>
@@ -1657,8 +1714,9 @@ export default function App() {
                                 p: ({node, ...props}) => <p className="mb-2 last:mb-0" {...props} />,
                                 ul: ({node, ...props}) => <ul className="list-disc ml-4 mb-2" {...props} />,
                                 ol: ({node, ...props}) => <ol className="list-decimal ml-4 mb-2" {...props} />,
-                                code: ({node, ...props}) => <code className="bg-[#121212] px-1 rounded text-orange-300 font-mono text-xs" {...props} />,
-                                pre: ({node, ...props}) => <pre className="bg-[#121212] p-3 rounded my-2 overflow-x-auto border border-[#333]" {...props} />,
+                                code: ({node, ...props}) => <code className="bg-[#121212] px-1 rounded-md text-orange-300 font-mono text-xs" {...props} />,
+                                pre: ({node, ...props}) => <pre className="bg-[#121212] p-3 rounded-md my-2 overflow-x-auto border border-[#333]" {...props} />,
+                                img: ({node, ...props}) => <img className="max-w-md rounded-md border border-[#444] my-2" {...props} />,
                             }}
                         >
                             {msg.text}
@@ -1668,7 +1726,7 @@ export default function App() {
             ))}
             {isProcessing && (
                  <div className="flex gap-4">
-                     <div className="w-8 h-8 rounded bg-[#2d2d2d] flex items-center justify-center animate-pulse"><Bot size={14} className="text-emerald-500" /></div>
+                     <div className="w-8 h-8 rounded-md bg-[#2d2d2d] flex items-center justify-center animate-pulse"><Bot size={14} className="text-emerald-500" /></div>
                      <div className="text-slate-500 text-xs italic py-2">Deep thought process active...</div>
                  </div>
             )}
@@ -1682,13 +1740,13 @@ export default function App() {
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
                     placeholder="Input Command..."
-                    className="flex-1 bg-[#252526] border border-[#333] rounded-sm px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
+                    className="flex-1 bg-[#252526] border border-[#333] rounded-md px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
                     autoFocus
                 />
                 <button 
                   onClick={handleSendMessage}
                   disabled={isProcessing}
-                  className="bg-indigo-700 hover:bg-indigo-600 text-white px-6 rounded-sm font-medium disabled:opacity-50"
+                  className="bg-indigo-700 hover:bg-indigo-600 text-white px-6 rounded-md font-medium disabled:opacity-50"
                 >
                     {isProcessing ? <LayoutTemplate className="animate-spin" size={18}/> : "RUN"}
                 </button>
@@ -1706,7 +1764,7 @@ export default function App() {
          {/* Sidebar Header */}
          <div className="h-9 flex items-center justify-between px-4 text-[11px] text-[#bbbbbb] tracking-wide select-none">
              {isSidebarOpen && <span>EXPLORER</span>}
-             <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1 hover:bg-[#333] rounded">
+             <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-1 hover:bg-[#333] rounded-md">
                  <MoreHorizontal size={16} />
              </button>
          </div>
@@ -1720,7 +1778,7 @@ export default function App() {
                         onClick={() => setProjectFolderOpen(!projectFolderOpen)}
                      >
                          {projectFolderOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
-                         <span>MWI_RESEARCH</span>
+                         <span>RESEARCH</span>
                      </div>
                      
                      {projectFolderOpen && (
@@ -1754,7 +1812,7 @@ export default function App() {
                  <div className="mt-6 px-3">
                      <button 
                         onClick={() => setIsGoogleMenuOpen(!isGoogleMenuOpen)}
-                        className="w-full flex items-center justify-between px-3 py-2 bg-[#0F9D58] hover:bg-[#0b8046] text-white rounded-sm text-xs font-semibold shadow-sm transition-colors"
+                        className="w-full flex items-center justify-between px-3 py-2 bg-[#0F9D58] hover:bg-[#0b8046] text-white rounded-md text-xs font-semibold shadow-sm transition-colors"
                      >
                          <span className="flex items-center gap-2"><Grid3X3 size={14}/> Google Workspace</span>
                          {isGoogleMenuOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
@@ -1762,24 +1820,24 @@ export default function App() {
                      
                      {isGoogleMenuOpen && (
                          <div className="mt-2 grid grid-cols-2 gap-2 pl-2 border-l border-[#333] ml-2">
-                             <button onClick={() => createNewFile('doc')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-blue-400">
+                             <button onClick={() => createNewFile('doc')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded-md text-[10px] gap-1 text-blue-400">
                                  <FileText size={20}/> Docs
                              </button>
-                             <button onClick={() => createNewFile('sheet')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-green-400">
+                             <button onClick={() => createNewFile('sheet')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded-md text-[10px] gap-1 text-green-400">
                                  <Table size={20}/> Sheets
                              </button>
-                             <button onClick={() => createNewFile('slide')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-orange-400">
+                             <button onClick={() => createNewFile('slide')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded-md text-[10px] gap-1 text-orange-400">
                                  <Presentation size={20}/> Slides
                              </button>
-                             <button onClick={() => createNewFile('whiteboard')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-orange-500">
+                             <button onClick={() => createNewFile('whiteboard')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded-md text-[10px] gap-1 text-orange-500">
                                  <PenTool size={20}/> Jamboard
                              </button>
-                             <button onClick={() => createNewFile('note')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-yellow-400">
+                             <button onClick={() => createNewFile('note')} className="flex flex-col items-center p-3 bg-[#2a2d2e] hover:bg-[#37373d] rounded-md text-[10px] gap-1 text-yellow-400">
                                  <StickyNote size={20}/> Keep
                              </button>
                              <button 
                                 onClick={handleConnectDrive} 
-                                className={`col-span-2 flex items-center justify-center p-2 rounded text-[10px] gap-2 transition-colors border border-dashed ${isDriveConnected ? 'bg-[#0F9D58]/10 border-[#0F9D58] text-[#0F9D58]' : 'border-[#444] hover:bg-[#333] text-slate-400'}`}
+                                className={`col-span-2 flex items-center justify-center p-2 rounded-md text-[10px] gap-2 transition-colors border border-dashed ${isDriveConnected ? 'bg-[#0F9D58]/10 border-[#0F9D58] text-[#0F9D58]' : 'border-[#444] hover:bg-[#333] text-slate-400'}`}
                              >
                                  {isDriveConnected ? <CheckCircle size={14}/> : <Cloud size={14}/>}
                                  {isDriveConnected ? 'Drive Connected' : 'Connect Drive'}
@@ -1792,7 +1850,7 @@ export default function App() {
                  <div className="mt-2 px-3">
                      <button 
                         onClick={() => setIsDevMenuOpen(!isDevMenuOpen)}
-                        className="w-full flex items-center justify-between px-3 py-2 bg-[#007acc] hover:bg-[#0062a3] text-white rounded-sm text-xs font-semibold shadow-sm transition-colors"
+                        className="w-full flex items-center justify-between px-3 py-2 bg-[#007acc] hover:bg-[#0062a3] text-white rounded-md text-xs font-semibold shadow-sm transition-colors"
                      >
                          <span className="flex items-center gap-2"><Binary size={14}/> Development</span>
                          {isDevMenuOpen ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
@@ -1800,13 +1858,13 @@ export default function App() {
                      
                      {isDevMenuOpen && (
                          <div className="mt-2 grid grid-cols-3 gap-2 pl-2 border-l border-[#333] ml-2">
-                             <button onClick={() => createNewFile('code', 'python')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-yellow-300">
+                             <button onClick={() => createNewFile('code', 'python')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded-md text-[10px] gap-1 text-yellow-300">
                                  <Box size={16}/> Python
                              </button>
-                             <button onClick={() => createNewFile('code', 'c')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-blue-500">
+                             <button onClick={() => createNewFile('code', 'c')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded-md text-[10px] gap-1 text-blue-500">
                                  <Cpu size={16}/> C
                              </button>
-                             <button onClick={() => createNewFile('code', 'matlab')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded text-[10px] gap-1 text-orange-600">
+                             <button onClick={() => createNewFile('code', 'matlab')} className="flex flex-col items-center p-2 bg-[#2a2d2e] hover:bg-[#37373d] rounded-md text-[10px] gap-1 text-orange-600">
                                  <Variable size={16}/> MATLAB
                              </button>
                          </div>
@@ -1817,7 +1875,7 @@ export default function App() {
                  <div className="mt-4 px-3">
                      <button 
                         onClick={() => createNewFile('search', undefined, 'Google Search')}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#4285F4] hover:bg-[#3367d6] text-white rounded-sm text-xs font-semibold shadow-sm transition-colors"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#4285F4] hover:bg-[#3367d6] text-white rounded-md text-xs font-semibold shadow-sm transition-colors"
                      >
                          <Search size={14}/> Deep Search
                      </button>
@@ -1833,7 +1891,7 @@ export default function App() {
                     />
                      <button 
                         onClick={() => fileInputRef.current?.click()}
-                        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#2a2d2e] hover:bg-[#37373d] text-[#cccccc] rounded-sm text-xs font-semibold shadow-sm transition-colors border border-[#444]"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#2a2d2e] hover:bg-[#37373d] text-[#cccccc] rounded-md text-xs font-semibold shadow-sm transition-colors border border-[#444]"
                      >
                          <Upload size={14}/> Upload File
                      </button>
@@ -1943,7 +2001,7 @@ export default function App() {
 
               {/* Terminal Panel (Scoped) */}
               {activeFile?.type === 'code' && (
-                  <div className="h-48 bg-[#1e1e1e] border-t border-[#333] flex flex-col">
+                  <div className="h-64 bg-[#1e1e1e] border-t border-[#333] flex flex-col transition-all">
                       <div className="flex items-center justify-between px-4 py-1 bg-[#252526] text-xs select-none">
                           <div className="flex items-center gap-2">
                               <span className="uppercase font-bold text-slate-400">Terminal</span>
@@ -1955,14 +2013,21 @@ export default function App() {
                               <button onClick={() => {}} className="hover:text-white text-slate-500"><X size={12}/></button>
                           </div>
                       </div>
-                      <div className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-1">
+                      <div className="flex-1 overflow-y-auto p-4 font-mono text-xs space-y-2">
                           {(!activeFile.terminalHistory || activeFile.terminalHistory.length === 0) && (
                               <div className="text-slate-600 italic">Ready to execute. Click 'Run' to compile/interpret...</div>
                           )}
                           {activeFile.terminalHistory?.map(log => (
-                              <div key={log.id} className={`${log.type === 'error' ? 'text-red-400' : log.type === 'output' ? 'text-slate-300' : 'text-slate-500'}`}>
-                                  <span className="opacity-50 mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
-                                  {log.content}
+                              <div key={log.id} className={`flex flex-col gap-1 ${log.type === 'error' ? 'text-red-400' : log.type === 'output' ? 'text-slate-300' : 'text-slate-500'}`}>
+                                  <div>
+                                      <span className="opacity-50 mr-2">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                                      {log.content}
+                                  </div>
+                                  {log.type === 'image' && log.imageSrc && (
+                                      <div className="mt-2 border border-[#333] rounded-md overflow-hidden bg-black w-fit">
+                                          <img src={log.imageSrc} alt="Plot Output" className="max-w-md max-h-80 object-contain" />
+                                      </div>
+                                  )}
                               </div>
                           ))}
                       </div>
@@ -1983,7 +2048,7 @@ export default function App() {
                <span>Ln 12, Col 45</span>
                <span>UTF-8</span>
                <span>{activeFile?.type === 'code' ? activeFile.subtype || 'Python' : 'Markdown'}</span>
-               <div className="flex items-center gap-1 hover:bg-[#1f8ad2] px-1 rounded cursor-pointer"><Settings size={12}/></div>
+               <div className="flex items-center gap-1 hover:bg-[#1f8ad2] px-1 rounded-md cursor-pointer"><Settings size={12}/></div>
           </div>
       </div>
 
