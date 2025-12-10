@@ -52,13 +52,20 @@ import {
   List,
   Cloud,
   CheckCircle,
-  Upload
+  Upload,
+  Volume2
 } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-// --- Types ---
+// --- Types & Globals ---
+
+declare global {
+  interface Window {
+    webkitAudioContext: typeof AudioContext;
+  }
+}
 
 type FileType = 'chat' | 'code' | 'doc' | 'whiteboard' | 'sheet' | 'slide' | 'note' | 'search';
 
@@ -84,6 +91,7 @@ interface Message {
   text: string;
   specialist?: string;
   timestamp: number;
+  videoUri?: string; // For Veo output
 }
 
 // --- Constants ---
@@ -117,18 +125,19 @@ That is the entire reason YANTRA exists: to become the final operating system fo
 2.  **ACTION OVER CHAT**: If the user asks for a summary, paper, or code, DO NOT just dump it in the chat. CREATE A FILE or UPDATE THE ACTIVE FILE.
 3.  **SPECIALIST DELEGATION**: Explicitly state which specialist is acting.
 4.  **IMAGE GENERATION**: If the user asks to generate an image/visual, use the "generate_image" action.
+5.  **VIDEO GENERATION**: If the user asks to generate a video/simulation, use the "generate_video" action.
 
 **FILE MANIPULATION COMMANDS:**
 To perform actions, you must include a JSON block at the END of your response.
 Format:
 \`\`\`json
 {
-  "action": "create_file" | "update_file" | "switch_tab" | "generate_image",
+  "action": "create_file" | "update_file" | "switch_tab" | "generate_image" | "generate_video",
   "file_id": "optional_id_if_update",
   "file_type": "doc" | "code" | "sheet" | "whiteboard" | "slide",
   "file_name": "filename.ext",
   "content": "The actual content...",
-  "prompt": "Detailed prompt for image generation (only for generate_image)"
+  "prompt": "Detailed prompt for image/video generation"
 }
 \`\`\`
 
@@ -140,7 +149,7 @@ Format:
 
 // --- Components ---
 
-const SidebarItem = ({ icon: Icon, label, onClick, active, fileType, subIcon }: any) => (
+const SidebarItem = ({ icon: Icon, label, onClick, active, fileType, subtype, subIcon }: any) => (
   <div 
     className={`w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors group relative cursor-pointer select-none ${active ? 'bg-[#37373d] text-white' : 'text-[#cccccc] hover:bg-[#2a2d2e]'}`}
     onClick={onClick}
@@ -148,7 +157,12 @@ const SidebarItem = ({ icon: Icon, label, onClick, active, fileType, subIcon }: 
     <div className="relative">
       <Icon size={14} className={
           fileType === 'chat' ? 'text-indigo-400' :
-          fileType === 'code' ? 'text-yellow-400' :
+          fileType === 'code' ? (
+             subtype === 'python' ? 'text-yellow-300' :
+             subtype === 'c' ? 'text-blue-500' :
+             subtype === 'matlab' ? 'text-orange-600' :
+             'text-yellow-400'
+          ) :
           fileType === 'sheet' ? 'text-green-500' :
           fileType === 'doc' ? 'text-blue-500' :
           fileType === 'slide' ? 'text-orange-500' :
@@ -168,7 +182,12 @@ const Tab = ({ file, active, onClick, onClose }: any) => (
     className={`group flex items-center gap-2 px-3 py-2 border-r border-[#252526] min-w-[120px] max-w-[200px] cursor-pointer select-none h-full ${active ? 'bg-[#1e1e1e] text-indigo-400 border-t-2 border-t-indigo-500' : 'bg-[#2d2d2d] text-[#969696] hover:bg-[#1e1e1e]'}`}
   >
     {file.type === 'chat' && <Bot size={14} />}
-    {file.type === 'code' && <Code2 size={14} />}
+    {file.type === 'code' && (
+      file.subtype === 'python' ? <Box size={14} className="text-yellow-300"/> :
+      file.subtype === 'c' ? <Cpu size={14} className="text-blue-500"/> :
+      file.subtype === 'matlab' ? <Variable size={14} className="text-orange-600"/> :
+      <Code2 size={14} />
+    )}
     {file.type === 'doc' && <FileText size={14} />}
     {file.type === 'whiteboard' && <PenTool size={14} />}
     {file.type === 'sheet' && <Grid3X3 size={14} />}
@@ -181,8 +200,6 @@ const Tab = ({ file, active, onClick, onClose }: any) => (
     </button>
   </div>
 );
-
-// --- Menu Bar Component for Google Tools ---
 
 const MenuBar = ({ onAction, isDriveConnected }: { onAction: (action: string, value?: any) => void, isDriveConnected?: boolean }) => {
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
@@ -252,17 +269,57 @@ const MenuBar = ({ onAction, isDriveConnected }: { onAction: (action: string, va
   );
 };
 
-// --- Assistant Panel ---
+// --- Assistant Panel (With TTS) ---
 
-const AssistantPanel = ({ file, apiKey, onApply, onClose }: { file: VirtualFile, apiKey: string, onApply: (c: string) => void, onClose: () => void }) => {
+const AssistantPanel = ({ file, VirtualFile, onApply, onClose }: { file: VirtualFile, onApply: (c: string) => void, onClose: () => void }) => {
   const [input, setInput] = useState('');
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
+  const [speaking, setSpeaking] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
       scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // TTS Helper
+  const handleTTS = async () => {
+     if(speaking || !file.content) return;
+     setSpeaking(true);
+     try {
+         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+         const response = await ai.models.generateContent({
+             model: 'gemini-2.5-flash-preview-tts',
+             contents: `Read this file content clearly and professionally: ${file.content.substring(0, 1000)}`, // Limit to 1000 chars for demo latency
+             config: {
+                 responseModalities: [Modality.AUDIO],
+                 speechConfig: {
+                     voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } }
+                 }
+             }
+         });
+         
+         const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+         if(base64Audio) {
+             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+             const binaryString = atob(base64Audio);
+             const len = binaryString.length;
+             const bytes = new Uint8Array(len);
+             for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+             const audioBuffer = await audioCtx.decodeAudioData(bytes.buffer);
+             const source = audioCtx.createBufferSource();
+             source.buffer = audioBuffer;
+             source.connect(audioCtx.destination);
+             source.start(0);
+             source.onended = () => setSpeaking(false);
+         } else {
+             setSpeaking(false);
+         }
+     } catch(e) {
+         console.error(e);
+         setSpeaking(false);
+     }
+  };
 
   const handleSend = async () => {
      if(!input.trim()) return;
@@ -272,9 +329,9 @@ const AssistantPanel = ({ file, apiKey, onApply, onClose }: { file: VirtualFile,
      setLoading(true);
 
      try {
-         const ai = new GoogleGenAI({ apiKey });
+         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
          let typeInstruction = "";
-         if(file.type === 'doc') typeInstruction = "Output valid HTML code inside a ```html block to represent the document content.";
+         if(file.type === 'doc') typeInstruction = "Output valid HTML code inside a ```html block.";
          if(file.type === 'sheet') typeInstruction = "Output valid CSV data inside a ```csv block.";
          if(file.type === 'code') typeInstruction = "Output the complete valid code inside a code block.";
          if(file.type === 'slide') typeInstruction = "Output a JSON object { slides: [{ title: string, body: string }] } inside a ```json block.";
@@ -285,7 +342,7 @@ const AssistantPanel = ({ file, apiKey, onApply, onClose }: { file: VirtualFile,
          ${file.content.substring(0, 5000)}
 
          INSTRUCTION:
-         If the user asks to generate, edit, or write content, you MUST provide the RESULTING CONTENT inside a code block (e.g., \`\`\`html ... \`\`\`).
+         If the user asks to generate, edit, or write content, you MUST provide the RESULTING CONTENT inside a code block.
          ${typeInstruction}
          If asking for generic help or explanation, just chat normally.
          
@@ -306,10 +363,8 @@ const AssistantPanel = ({ file, apiKey, onApply, onClose }: { file: VirtualFile,
   };
 
   const extractAndApply = (text: string) => {
-      // Robust extraction of code blocks
       const match = text.match(/```(?:content|html|python|c|matlab|json|csv)?\s*([\s\S]*?)```/);
       const content = match ? match[1] : text;
-      // Basic cleanup
       onApply(content.trim());
   };
 
@@ -319,7 +374,12 @@ const AssistantPanel = ({ file, apiKey, onApply, onClose }: { file: VirtualFile,
               <div className="flex items-center gap-2 text-xs font-bold text-indigo-400">
                   <Sparkles size={12}/> YANTRA ASSISTANT
               </div>
-              <button onClick={onClose} className="hover:text-white text-slate-400"><X size={14}/></button>
+              <div className="flex items-center gap-2">
+                  <button onClick={handleTTS} className={`hover:text-white ${speaking ? 'text-green-400 animate-pulse' : 'text-slate-400'}`} title="Read file aloud">
+                      <Volume2 size={14}/>
+                  </button>
+                  <button onClick={onClose} className="hover:text-white text-slate-400"><X size={14}/></button>
+              </div>
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-4">
               {messages.length === 0 && (
@@ -364,18 +424,23 @@ const AssistantPanel = ({ file, apiKey, onApply, onClose }: { file: VirtualFile,
   )
 }
 
-// --- Editors ---
+// --- Editors (Code, Doc, Sheet, Slide, Whiteboard, Search) ---
+// CodeEditor, DocEditor, SheetEditor, SlideEditor, WhiteboardEditor, SearchEditor 
+// [Unchanged from previous robust implementation, but removing apiKey prop drilling since we use process.env.API_KEY]
 
-const CodeEditor = ({ file, onChange, onRun, onRename, apiKey }: any) => {
+const CodeEditor = ({ file, onChange, onRun, onRename }: any) => {
   const [showAssistant, setShowAssistant] = useState(false);
-  
   return (
   <div className="flex h-full bg-[#1e1e1e] overflow-hidden">
       <div className="flex-1 flex flex-col min-w-0">
           <div className="flex items-center justify-between p-2 bg-[#1e1e1e] border-b border-[#333] text-xs text-slate-400">
               <div className="flex items-center gap-2">
                 <span className="font-mono text-indigo-400 flex items-center gap-2">
-                    <Code2 size={12}/>
+                    {file.subtype === 'python' ? <Box size={14} className="text-yellow-300"/> :
+                     file.subtype === 'c' ? <Cpu size={14} className="text-blue-500"/> :
+                     file.subtype === 'matlab' ? <Variable size={14} className="text-orange-600"/> :
+                     <Code2 size={14}/>
+                    }
                     <input 
                         value={file.name}
                         onChange={(e) => onRename(e.target.value)}
@@ -402,45 +467,33 @@ const CodeEditor = ({ file, onChange, onRun, onRename, apiKey }: any) => {
             />
           </div>
       </div>
-      {showAssistant && <AssistantPanel file={file} apiKey={apiKey} onApply={onChange} onClose={() => setShowAssistant(false)} />}
+      {showAssistant && <AssistantPanel file={file} onApply={onChange} onClose={() => setShowAssistant(false)} />}
   </div>
   );
 };
 
-// High-Fidelity Google Docs Clone (Rich Text)
-const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) => {
+const DocEditor = ({ file, onChange, onRename, isDriveConnected }: any) => {
   const contentRef = useRef<HTMLDivElement>(null);
   const selectionRange = useRef<Range | null>(null);
   const [showAssistant, setShowAssistant] = useState(false);
 
-  // Initialize content once
   useEffect(() => {
     if (contentRef.current && contentRef.current.innerHTML !== file.content) {
-        // Only update if significantly different (basic check to avoid loop)
         if(file.content === "" || file.content.startsWith("<")) {
              contentRef.current.innerHTML = file.content;
         } else {
-             // Fallback for old plaintext files
              contentRef.current.innerText = file.content;
         }
     }
   }, [file.id]);
 
   const handleInput = () => {
-    if (contentRef.current) {
-      onChange(contentRef.current.innerHTML);
-    }
+    if (contentRef.current) onChange(contentRef.current.innerHTML);
   };
   
   const handleAIApply = (newContent: string) => {
-      // Append or replace? Let's insert at cursor if possible, else append
-      // For simplicity in this logic, we might just append if it's a block, or replace if empty.
-      // But user might want full rewrite.
-      // Let's try to execCommand insertHTML
       if (contentRef.current) {
           contentRef.current.focus();
-          // Restore selection not strictly needed if we just assume append or simplistic replacement
-          // But let's try to be smart.
           document.execCommand('insertHTML', false, newContent);
           handleInput();
       }
@@ -448,9 +501,7 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
 
   const saveSelection = () => {
     const sel = window.getSelection();
-    if (sel && sel.rangeCount > 0) {
-      selectionRange.current = sel.getRangeAt(0);
-    }
+    if (sel && sel.rangeCount > 0) selectionRange.current = sel.getRangeAt(0);
   };
 
   const restoreSelection = () => {
@@ -462,11 +513,10 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
   };
 
   const exec = (command: string, value: string | undefined = undefined) => {
-      // Focus first to ensure execution context
       if(contentRef.current) contentRef.current.focus();
       restoreSelection();
       document.execCommand(command, false, value);
-      handleInput(); // Sync change
+      handleInput();
   };
 
   const handleAction = (action: string) => {
@@ -489,7 +539,6 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
     } else if (action === 'insert_line') {
       exec('insertHorizontalRule');
     } else if (action === 'insert_page') {
-       // Visual page break
        const pageBreak = `<div style="page-break-after: always; height: 20px; background: #e0e0e0; margin: 20px -96px; text-align: center; color: #888; font-size: 10px; display: flex; align-items: center; justify-content: center;">--- PAGE BREAK ---</div>`;
        exec('insertHTML', pageBreak);
     } else if (action === 'bold') exec('bold');
@@ -502,7 +551,6 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
   return (
     <div className="flex h-full overflow-hidden">
     <div className="flex-1 flex flex-col bg-[#F0F2F5] overflow-y-auto items-center relative">
-       {/* Top Header */}
        <div className="w-full bg-white border-b border-[#dadce0] px-4 py-2 sticky top-0 z-20 flex flex-col gap-1">
            <div className="flex items-center gap-3 mb-1">
               {file.type === 'note' ? (
@@ -525,12 +573,8 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
               </div>
            </div>
            
-           {/* Formatting Toolbar */}
            <div className="flex items-center gap-2 bg-[#EDF2FA] rounded-full px-4 py-1.5 w-max mt-1 shadow-sm border border-slate-200">
-               <select 
-                  onChange={(e) => exec('fontName', e.target.value)}
-                  className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-24"
-               >
+               <select onChange={(e) => exec('fontName', e.target.value)} className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-24">
                    <option value="Arial">Arial</option>
                    <option value="Times New Roman">Times New Roman</option>
                    <option value="Courier New">Courier New</option>
@@ -539,11 +583,7 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
                </select>
                <div className="w-px h-4 bg-slate-300"></div>
                <div className="flex items-center gap-1">
-                   <select 
-                       onChange={(e) => exec('fontSize', e.target.value)}
-                       defaultValue="3"
-                       className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-16"
-                   >
+                   <select onChange={(e) => exec('fontSize', e.target.value)} defaultValue="3" className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-16">
                        <option value="1">10px</option>
                        <option value="2">13px</option>
                        <option value="3">16px</option>
@@ -555,10 +595,7 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
                </div>
                <div className="w-px h-4 bg-slate-300"></div>
                <div className="flex items-center gap-1">
-                   <select 
-                        onChange={(e) => exec('formatBlock', e.target.value)}
-                        className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-24"
-                    >
+                   <select onChange={(e) => exec('formatBlock', e.target.value)} className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-24">
                         <option value="p">Normal Text</option>
                         <option value="h1">Heading 1</option>
                         <option value="h2">Heading 2</option>
@@ -575,16 +612,9 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
                        <input type="color" onMouseDown={(e) => e.preventDefault()} onChange={(e) => exec('foreColor', e.target.value)} className="w-4 h-4 border-none bg-transparent cursor-pointer"/>
                    </div>
                </div>
-               <div className="w-px h-4 bg-slate-300"></div>
-               <div className="flex items-center gap-1">
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyLeft')} className="p-1 hover:bg-slate-200 rounded-md"><AlignLeft size={14}/></button>
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyCenter')} className="p-1 hover:bg-slate-200 rounded-md"><AlignCenter size={14}/></button>
-                   <button onMouseDown={(e) => e.preventDefault()} onClick={() => exec('justifyRight')} className="p-1 hover:bg-slate-200 rounded-md"><AlignRight size={14}/></button>
-               </div>
            </div>
        </div>
        
-       {/* Paper (WYSIWYG) */}
        <div className="w-[816px] min-h-[1056px] bg-white shadow-lg my-8 p-[96px] text-black border border-[#e0e0e0]">
            <div 
               ref={contentRef}
@@ -592,21 +622,19 @@ const DocEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) 
               onInput={handleInput}
               onMouseUp={saveSelection}
               onKeyUp={saveSelection}
-              className="w-full h-full min-h-[800px] focus:outline-none prose max-w-none text-black font-sans empty:before:content-[attr(placeholder)] empty:before:text-slate-300"
+              className="w-full h-full min-h-[800px] focus:outline-none prose max-w-none text-black font-sans empty:before:content-[attr(data-placeholder)] empty:before:text-slate-300"
               style={{ fontSize: '11pt' }}
-              placeholder="Start typing..."
+              data-placeholder="Start typing..."
            />
        </div>
     </div>
-    {showAssistant && <AssistantPanel file={file} apiKey={apiKey} onApply={handleAIApply} onClose={() => setShowAssistant(false)} />}
+    {showAssistant && <AssistantPanel file={file} onApply={handleAIApply} onClose={() => setShowAssistant(false)} />}
     </div>
   );
 };
 
-// High-Fidelity Google Sheets Clone (Functional)
-const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) => {
+const SheetEditor = ({ file, onChange, onRename, isDriveConnected }: any) => {
   const [showAssistant, setShowAssistant] = useState(false);
-  // Parsing logic for JSON-based sheet with styles or fallback to CSV
   const parseContent = (content: string) => {
       try {
           if (content.trim().startsWith('{')) {
@@ -617,8 +645,6 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
               };
           }
       } catch (e) {}
-      
-      // Fallback CSV
       const grid = content ? content.split('\n').map(row => row.split(',')) : Array(60).fill(Array(26).fill(''));
       return { grid, styles: {} };
   };
@@ -626,15 +652,12 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
   const { grid: initialGrid, styles: initialStyles } = useMemo(() => parseContent(file.content), []);
   const [grid, setGrid] = useState<string[][]>(initialGrid);
   const [styles, setStyles] = useState<Record<string, React.CSSProperties>>(initialStyles);
-  
-  // Selection State: { start: {r,c}, end: {r,c} }
   const [selection, setSelection] = useState<{start: {r:number, c:number}, end: {r:number, c:number}} | null>(null);
-  const [activeCell, setActiveCell] = useState<{r:number, c:number} | null>(null); // The cell being edited or anchor
+  const [activeCell, setActiveCell] = useState<{r:number, c:number} | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [dragStart, setDragStart] = useState<{r:number, c:number} | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Sync if external update
   useEffect(() => {
      const { grid: newGrid, styles: newStyles } = parseContent(file.content);
      if (JSON.stringify(newGrid) !== JSON.stringify(grid)) {
@@ -644,9 +667,7 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
   }, [file.id]);
 
   useEffect(() => {
-      if(isEditing && inputRef.current) {
-          inputRef.current.focus();
-      }
+      if(isEditing && inputRef.current) inputRef.current.focus();
   }, [isEditing]);
 
   const save = (newGrid: string[][], newStyles: Record<string, React.CSSProperties>) => {
@@ -656,9 +677,8 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
   };
   
   const handleAIApply = (newContent: string) => {
-     // AI returns CSV, parse and replace grid
      const { grid: newGrid } = parseContent(newContent);
-     save(newGrid, styles); // Keep styles?
+     save(newGrid, styles);
   };
 
   const getCellValue = (r: number, c: number, currentGrid: string[][]) => {
@@ -668,13 +688,10 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
       return val; 
   };
 
-  // Robust recursive safe compute
   const computeValue = (cell: string, currentGrid: string[][], stack: string[] = []) => {
       if (!cell || !cell.toString().startsWith('=')) return cell;
-      
       const formulaKey = cell;
       if (stack.includes(formulaKey)) return "#CIRCULAR";
-      
       try {
           const formula = cell.substring(1).toUpperCase();
           const getRange = (range: string) => {
@@ -686,29 +703,22 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
              let values = [];
              for(let r=Math.min(start.r, end.r); r<=Math.max(start.r, end.r); r++) {
                  for(let c=Math.min(start.c, end.c); c<=Math.max(start.c, end.c); c++) {
-                     // Recursively resolve references for range values
                      let raw = getCellValue(r, c, currentGrid);
-                     if(typeof raw === 'string' && raw.startsWith('=')) {
-                        raw = computeValue(raw, currentGrid, [...stack, formulaKey]);
-                     }
+                     if(typeof raw === 'string' && raw.startsWith('=')) raw = computeValue(raw, currentGrid, [...stack, formulaKey]);
                      values.push(raw);
                  }
              }
              return values;
           };
-          
           const parseRef = (ref: string) => {
               const match = ref.match(/([A-Z]+)([0-9]+)/);
               if(!match) return null;
               const colStr = match[1];
               const row = parseInt(match[2]) - 1;
               let col = 0;
-              for(let i=0; i<colStr.length; i++) {
-                  col = col * 26 + (colStr.charCodeAt(i) - 64);
-              }
+              for(let i=0; i<colStr.length; i++) col = col * 26 + (colStr.charCodeAt(i) - 64);
               return { r: row, c: col - 1 };
           };
-          
           if (formula.startsWith('SUM(')) {
               const range = formula.match(/SUM\((.*)\)/)?.[1];
               const vals = getRange(range || '');
@@ -717,43 +727,25 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
           if (formula.startsWith('AVG(')) {
              const range = formula.match(/AVG\((.*)\)/)?.[1];
              const vals = getRange(range || '');
-             if (vals.length === 0) return 0;
-             const sum = vals.reduce((a: any, b: any) => Number(a) + Number(b), 0);
-             return sum / vals.length;
+             return vals.length ? vals.reduce((a: any, b: any) => Number(a) + Number(b), 0) / vals.length : 0;
           }
            if (formula.startsWith('MAX(')) {
              const range = formula.match(/MAX\((.*)\)/)?.[1];
              const vals = getRange(range || '');
              return Math.max(...vals.map((v:any) => Number(v)));
           }
-          if (formula.startsWith('CONCAT(')) {
-             const args = formula.match(/CONCAT\((.*)\)/)?.[1]?.split(',');
-             if(!args) return "";
-             return args.map(a => a.trim().replace(/^"|"$/g, '')).join('');
-          }
-
           let parsed = formula.replace(/[A-Z]+[0-9]+/g, (match) => {
              const ref = parseRef(match);
              if(ref) {
                  let val = getCellValue(ref.r, ref.c, currentGrid);
-                 // Resolve dependency
-                 if(typeof val === 'string' && val.startsWith('=')) {
-                     val = computeValue(val, currentGrid, [...stack, formulaKey]);
-                 }
+                 if(typeof val === 'string' && val.startsWith('=')) val = computeValue(val, currentGrid, [...stack, formulaKey]);
                  return isNaN(Number(val)) ? `"${val}"` : String(val);
              }
              return "0";
           });
-          
-          // Basic arithmetic safety check
-          if (/^[0-9+\-*/().\s"A-Za-z]+$/.test(parsed)) {
-               // eslint-disable-next-line no-eval
-               return eval(parsed);
-          }
+          if (/^[0-9+\-*/().\s"A-Za-z]+$/.test(parsed)) return eval(parsed);
           return cell;
-      } catch (e) {
-          return "#ERROR";
-      }
+      } catch (e) { return "#ERROR"; }
   };
 
   const handleCellChange = (r: number, c: number, val: string) => {
@@ -767,12 +759,10 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
       if(!selection) return;
       const {start, end} = selection;
       const newStyles = { ...styles };
-      
       for(let r=Math.min(start.r, end.r); r<=Math.max(start.r, end.r); r++) {
           for(let c=Math.min(start.c, end.c); c<=Math.max(start.c, end.c); c++) {
               const key = `${r}-${c}`;
-              const currentStyle = newStyles[key] || {};
-              newStyles[key] = { ...currentStyle, [styleKey]: currentStyle[styleKey] === value ? undefined : value };
+              newStyles[key] = { ...newStyles[key], [styleKey]: newStyles[key]?.[styleKey] === value ? undefined : value };
           }
       }
       save(grid, newStyles);
@@ -794,10 +784,8 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
       else if (action === 'underline') toggleStyle('textDecoration', 'underline');
   }
 
-  // --- Interaction Handlers ---
-
   const handleMouseDown = (r: number, c: number, e: React.MouseEvent) => {
-      if(isEditing) return; // Don't disrupt editing if clicking inside
+      if(isEditing) return;
       e.preventDefault();
       setActiveCell({r, c});
       setSelection({ start: {r, c}, end: {r, c} });
@@ -806,15 +794,10 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
   };
 
   const handleMouseEnter = (r: number, c: number) => {
-      if(dragStart) {
-          setSelection({ start: dragStart, end: {r, c} });
-      }
+      if(dragStart) setSelection({ start: dragStart, end: {r, c} });
   };
 
-  const handleMouseUp = () => {
-      setDragStart(null);
-  };
-
+  const handleMouseUp = () => setDragStart(null);
   const handleDoubleClick = (r: number, c: number) => {
       setActiveCell({r,c});
       setSelection({ start: {r,c}, end: {r,c} });
@@ -830,24 +813,17 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
               const nextR = Math.min(grid.length - 1, activeCell.r + 1);
               setActiveCell({r: nextR, c: activeCell.c});
               setSelection({start: {r: nextR, c: activeCell.c}, end: {r: nextR, c: activeCell.c}});
-              // Refocus grid container?
           }
           return;
       }
-
       let {r, c} = activeCell;
       if(e.key === 'ArrowUp') r = Math.max(0, r - 1);
       else if(e.key === 'ArrowDown') r = Math.min(grid.length - 1, r + 1);
       else if(e.key === 'ArrowLeft') c = Math.max(0, c - 1);
       else if(e.key === 'ArrowRight') c = Math.min(grid[0].length - 1, c + 1);
-      else if(e.key === 'Enter') {
-          e.preventDefault();
-          r = Math.min(grid.length - 1, r + 1);
-      } else if(e.key === 'Tab') {
-          e.preventDefault();
-          c = Math.min(grid[0].length - 1, c + 1);
-      } else if (e.key === 'Backspace' || e.key === 'Delete') {
-          // Clear range
+      else if(e.key === 'Enter') { e.preventDefault(); r = Math.min(grid.length - 1, r + 1); } 
+      else if(e.key === 'Tab') { e.preventDefault(); c = Math.min(grid[0].length - 1, c + 1); } 
+      else if (e.key === 'Backspace' || e.key === 'Delete') {
           if(selection) {
               const newGrid = [...grid.map(row => [...row])];
               const {start, end} = selection;
@@ -860,49 +836,33 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
           }
           return;
       } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-           // Start editing with this key
            setIsEditing(true);
            handleCellChange(r, c, e.key);
            return;
-      } else {
-          return;
-      }
+      } else return;
 
       setActiveCell({r, c});
-      if(e.shiftKey && selection) {
-          // Expand selection from anchor (dragStart logic needed but usually anchor is start)
-          // Simplified: anchor at start, move end
-          setSelection({ ...selection, end: {r, c} });
-      } else {
-          setSelection({ start: {r,c}, end: {r,c} });
-      }
+      if(e.shiftKey && selection) setSelection({ ...selection, end: {r, c} });
+      else setSelection({ start: {r,c}, end: {r,c} });
   };
 
-
-  // Ensure grid size
   const displayGrid = useMemo(() => {
      const temp = [...grid];
-     // Add buffer
      while(temp.length < 60) temp.push(Array(26).fill(''));
      temp.forEach(r => { while(r.length < 26) r.push(''); });
      return temp;
   }, [grid]);
 
-  // Selection Overlay Calc
   const selectionStyle = useMemo(() => {
       if(!selection) return { display: 'none' };
       const r1 = Math.min(selection.start.r, selection.end.r);
       const c1 = Math.min(selection.start.c, selection.end.c);
       const r2 = Math.max(selection.start.r, selection.end.r);
       const c2 = Math.max(selection.start.c, selection.end.c);
-      
-      // Assuming fixed w/h for now (approx)
-      // Header: 40px w, 24px h. Cells: 100px w, 24px h.
-      const top = r1 * 25 + 1; // +1 border
+      const top = r1 * 25 + 1;
       const left = c1 * 101 + 1;
       const width = (c2 - c1 + 1) * 101 - 1;
       const height = (r2 - r1 + 1) * 25 - 1;
-      
       return { top, left, width, height, display: 'block' };
   }, [selection]);
 
@@ -926,7 +886,6 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                     </button>
                 </div>
             </div>
-             {/* Toolbar */}
            <div className="flex items-center gap-2 bg-[#EDF2FA] rounded-full px-4 py-1.5 w-max mt-1 shadow-sm border border-slate-200">
                <div className="flex items-center gap-1">
                    <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleStyle('fontWeight', 'bold')} className={`p-1 hover:bg-slate-200 rounded-md`}><Bold size={14}/></button>
@@ -940,7 +899,6 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
            </div>
         </div>
         
-        {/* Formula Bar */}
         <div className="flex items-center h-8 bg-white border-b border-[#e0e0e0] px-2 gap-2">
             <span className="font-bold text-slate-400 px-2 border-r border-[#e0e0e0]">fx</span>
             <input 
@@ -950,9 +908,7 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
             />
         </div>
 
-        {/* Grid Container */}
         <div className="flex-1 flex flex-col overflow-auto bg-white relative" onMouseUp={handleMouseUp}>
-            {/* Column Headers */}
             <div className="flex h-6 bg-[#f8f9fa] border-b border-[#c0c0c0] sticky top-0 z-20">
                  <div className="w-10 min-w-[40px] bg-[#f8f9fa] border-r border-[#c0c0c0] z-20 sticky left-0"></div>
                  {displayGrid[0].map((_: any, i: number) => {
@@ -965,11 +921,9 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                  })}
             </div>
             
-            {/* Rows */}
             <div className="relative">
                 {displayGrid.map((row: any[], r: number) => (
                     <div key={r} className="flex h-[25px]">
-                        {/* Row Header */}
                         <div className={`w-10 min-w-[40px] border-r border-[#c0c0c0] text-center text-[10px] flex items-center justify-center font-semibold sticky left-0 z-10 border-b border-[#e0e0e0] ${selection && r >= Math.min(selection.start.r, selection.end.r) && r <= Math.max(selection.start.r, selection.end.r) ? 'bg-[#e8f0fe] text-[#1a73e8]' : 'bg-[#f8f9fa] text-slate-500'}`}>{r + 1}</div>
                         {row.map((cell: string, c: number) => {
                             const cellStyle = styles[`${r}-${c}`] || {};
@@ -1006,7 +960,6 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                     </div>
                 ))}
 
-                {/* Selection Overlay */}
                 {selection && (
                     <div 
                         className="absolute border-2 border-[#1a73e8] bg-[#1a73e8]/10 pointer-events-none z-10"
@@ -1015,48 +968,37 @@ const SheetEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                             left: (Number(selectionStyle.left) + 40) + 'px' // Offset for row header
                         }}
                     >
-                         {/* Anchor point handle */}
                          <div className="absolute -bottom-1 -right-1 w-2 h-2 bg-[#1a73e8] border border-white cursor-crosshair pointer-events-auto"></div>
                     </div>
                 )}
             </div>
         </div>
     </div>
-    {showAssistant && <AssistantPanel file={file} apiKey={apiKey} onApply={handleAIApply} onClose={() => setShowAssistant(false)} />}
+    {showAssistant && <AssistantPanel file={file} onApply={handleAIApply} onClose={() => setShowAssistant(false)} />}
     </div>
   );
 };
 
-const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any) => {
+const SlideEditor = ({ file, onChange, onRename, isDriveConnected }: any) => {
     const [showAssistant, setShowAssistant] = useState(false);
     
-    // Data Structure: { slides: [{ id, title, body }] }
     const parseContent = (content: string) => {
          try {
              if(content.trim().startsWith('{')) {
                  const parsed = JSON.parse(content);
-                 // Backward compatibility check or new structure
-                 if (parsed.slides && Array.isArray(parsed.slides)) {
-                     return parsed;
-                 } else if (parsed.title || parsed.body) {
-                     // Convert old single slide format to new array format
-                     return { slides: [{ id: '1', title: parsed.title || '', body: parsed.body || '' }] };
-                 }
+                 if (parsed.slides && Array.isArray(parsed.slides)) return parsed;
+                 else if (parsed.title || parsed.body) return { slides: [{ id: '1', title: parsed.title || '', body: parsed.body || '' }] };
              }
          } catch(e) {}
-         // Fallback text content
          return { slides: [{ id: '1', title: 'Title', body: 'Subtitle' }] };
     };
 
     const initialData = useMemo(() => parseContent(file.content), []);
     const [slides, setSlides] = useState<any[]>(initialData.slides);
     const [activeSlideIndex, setActiveSlideIndex] = useState(0);
-
-    // Refs for current slide content to avoid re-render cursor jumps
     const titleRef = useRef<HTMLDivElement>(null);
     const bodyRef = useRef<HTMLDivElement>(null);
 
-    // Sync from external changes (rare, usually just initial)
     useEffect(() => {
         const newData = parseContent(file.content);
         if (JSON.stringify(newData.slides) !== JSON.stringify(slides)) {
@@ -1065,11 +1007,10 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
         }
     }, [file.id]);
 
-    // Update refs when active slide changes
     useEffect(() => {
         if (titleRef.current) titleRef.current.innerHTML = slides[activeSlideIndex]?.title || '';
         if (bodyRef.current) bodyRef.current.innerHTML = slides[activeSlideIndex]?.body || '';
-    }, [activeSlideIndex, slides.length]); // Re-run when switching slides
+    }, [activeSlideIndex, slides.length]);
 
     const save = (newSlides: any[]) => {
         setSlides(newSlides);
@@ -1079,13 +1020,6 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
     const handleInput = (field: 'title' | 'body', value: string) => {
         const newSlides = [...slides];
         newSlides[activeSlideIndex] = { ...newSlides[activeSlideIndex], [field]: value };
-        // We do NOT setSlides here to avoid re-rendering the editor and losing cursor.
-        // We only persist to file.content.
-        // Actually, we SHOULD update state for consistency, but we must NOT bind value/dangerouslySetInnerHTML in the render.
-        // We will just update the ref's implicit state via the 'save' function which updates parent.
-        // But we need to keep local state 'slides' in sync for the sidebar thumbnail rendering.
-        
-        // Optimisation: Update local slides state but the Editor Divs are uncontrolled.
         setSlides(newSlides);
         onChange(JSON.stringify({ slides: newSlides }));
     };
@@ -1104,7 +1038,6 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
             if (parsed.slides) {
                 save(parsed.slides);
             } else {
-                // Single slide update or unknown format
                 const newSlides = [...slides];
                 newSlides[activeSlideIndex] = { 
                     ...newSlides[activeSlideIndex], 
@@ -1112,7 +1045,6 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                     body: parsed.body || newSlides[activeSlideIndex].body
                 };
                 save(newSlides);
-                // Update refs manually to reflect AI change
                 if(titleRef.current) titleRef.current.innerHTML = newSlides[activeSlideIndex].title;
                 if(bodyRef.current) bodyRef.current.innerHTML = newSlides[activeSlideIndex].body;
             }
@@ -1141,7 +1073,6 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
     return (
         <div className="flex h-full overflow-hidden">
         <div className="flex-1 flex flex-col bg-white overflow-hidden">
-            {/* Toolbar */}
             <div className="w-full bg-white border-b border-[#dadce0] px-4 py-2 flex flex-col gap-1">
                <div className="flex items-center gap-3">
                    <Presentation size={24} className="text-[#Fbbc04]"/>
@@ -1159,24 +1090,14 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                        </button>
                    </div>
                </div>
-                {/* Formatting Toolbar */}
                <div className="flex items-center gap-2 bg-[#EDF2FA] rounded-full px-4 py-1.5 w-max mt-1 shadow-sm border border-slate-200">
-                    <select 
-                        onChange={(e) => exec('fontName', e.target.value)}
-                        onMouseDown={(e) => e.preventDefault()}
-                        className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-24"
-                    >
+                    <select onChange={(e) => exec('fontName', e.target.value)} onMouseDown={(e) => e.preventDefault()} className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-24">
                         <option value="Arial">Arial</option>
                         <option value="Times New Roman">Times New Roman</option>
                     </select>
                    <div className="w-px h-4 bg-slate-300"></div>
                    <div className="flex items-center gap-1">
-                       <select 
-                           onChange={(e) => exec('fontSize', e.target.value)}
-                           onMouseDown={(e) => e.preventDefault()}
-                           defaultValue="3"
-                           className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-16"
-                       >
+                       <select onChange={(e) => exec('fontSize', e.target.value)} onMouseDown={(e) => e.preventDefault()} defaultValue="3" className="bg-transparent text-xs text-slate-700 focus:outline-none cursor-pointer w-16">
                            <option value="1">10px</option>
                            <option value="2">13px</option>
                            <option value="3">16px</option>
@@ -1200,7 +1121,6 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
             </div>
 
             <div className="flex-1 flex overflow-hidden">
-                 {/* Filmstrip */}
                  <div className="w-48 bg-white border-r border-[#dadce0] flex flex-col p-4 gap-4 overflow-y-auto shrink-0">
                      {slides.map((slide: any, i: number) => (
                          <div 
@@ -1221,22 +1141,21 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                      </button>
                  </div>
 
-                 {/* Canvas */}
                  <div className="flex-1 bg-[#F8F9FA] flex items-center justify-center p-8 overflow-auto">
                     <div className="w-[960px] h-[540px] bg-white shadow-xl flex flex-col p-16 border border-[#dadce0] relative shrink-0">
                         <div 
                            ref={titleRef}
                            contentEditable
-                           className="text-5xl font-sans font-bold mb-8 outline-none placeholder-[#dadce0] text-black bg-white text-center mt-20 empty:before:content-[attr(placeholder)] empty:before:text-slate-300" 
-                           placeholder="Click to add title"
+                           className="text-5xl font-sans font-bold mb-8 outline-none placeholder-[#dadce0] text-black bg-white text-center mt-20 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-300" 
+                           data-placeholder="Click to add title"
                            onInput={(e) => handleInput('title', e.currentTarget.innerHTML)}
                            onMouseDown={(e) => e.stopPropagation()}
                         />
                         <div 
                             ref={bodyRef}
                             contentEditable
-                            className="flex-1 text-2xl font-sans resize-none outline-none placeholder-[#dadce0] text-black bg-white text-center empty:before:content-[attr(placeholder)] empty:before:text-slate-300"
-                            placeholder="Click to add subtitle"
+                            className="flex-1 text-2xl font-sans resize-none outline-none placeholder-[#dadce0] text-black bg-white text-center empty:before:content-[attr(data-placeholder)] empty:before:text-slate-300"
+                            data-placeholder="Click to add subtitle"
                             onInput={(e) => handleInput('body', e.currentTarget.innerHTML)}
                             onMouseDown={(e) => e.stopPropagation()}
                         />
@@ -1244,7 +1163,7 @@ const SlideEditor = ({ file, onChange, onRename, isDriveConnected, apiKey }: any
                  </div>
             </div>
         </div>
-        {showAssistant && <AssistantPanel file={file} apiKey={apiKey} onApply={handleAIApply} onClose={() => setShowAssistant(false)} />}
+        {showAssistant && <AssistantPanel file={file} onApply={handleAIApply} onClose={() => setShowAssistant(false)} />}
         </div>
     );
 };
@@ -1333,16 +1252,16 @@ const WhiteboardEditor = ({ file, onChange, onRename }: any) => {
   );
 };
 
-const SearchEditor = ({ file, onChange, apiKey, onRename }: any) => {
+const SearchEditor = ({ file, onChange, onRename }: any) => {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<string>(file.content || '');
     const [searching, setSearching] = useState(false);
 
     const handleSearch = async () => {
-        if(!query || !apiKey) return;
+        if(!query) return;
         setSearching(true);
         try {
-            const ai = new GoogleGenAI({ apiKey });
+            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
             const response = await ai.models.generateContent({
                 model: 'gemini-2.5-flash',
                 contents: `Search query: ${query}`,
@@ -1411,7 +1330,7 @@ const SearchEditor = ({ file, onChange, apiKey, onRename }: any) => {
 // --- Main App ---
 
 export default function App() {
-  const [apiKey, setApiKey] = useState(process.env.API_KEY || '');
+  const [hasKey, setHasKey] = useState(false);
   const [files, setFiles] = useState<VirtualFile[]>([
     { id: '1', name: 'Chat', type: 'chat', content: JSON.stringify([]), terminalHistory: [] },
   ]);
@@ -1429,6 +1348,28 @@ export default function App() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activeFile = files.find(f => f.id === activeTabId);
+
+  // API Key Gate
+  useEffect(() => {
+    async function checkKey() {
+      const aistudio = (window as any).aistudio;
+      if (aistudio && aistudio.hasSelectedApiKey) {
+        const has = await aistudio.hasSelectedApiKey();
+        setHasKey(has);
+      } else {
+        setHasKey(true); // Dev fallback
+      }
+    }
+    checkKey();
+  }, []);
+
+  const handleSelectKey = async () => {
+    const aistudio = (window as any).aistudio;
+    if (aistudio && aistudio.openSelectKey) {
+      await aistudio.openSelectKey();
+      setHasKey(true);
+    }
+  };
 
   // -- Helpers --
 
@@ -1497,7 +1438,7 @@ export default function App() {
     if(!fileId) return;
     addTerminalLog(fileId, `> Executing ${fileName}...`, 'info');
     
-    const ai = new GoogleGenAI({ apiKey });
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
     // Parallel execution: Text output + Image (if plotting detected)
     const promises = [];
@@ -1548,7 +1489,7 @@ export default function App() {
   };
 
   const handleSendMessage = async () => {
-    if (!chatInput.trim() || !apiKey) return;
+    if (!chatInput.trim()) return;
     const activeChatFile = activeFile;
     if (!activeChatFile || activeChatFile.type !== 'chat') return;
 
@@ -1566,7 +1507,7 @@ export default function App() {
     `).join('\n');
 
     try {
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-pro-preview',
         contents: newHistory.map(m => ({ role: m.role, parts: [{ text: m.text }] })),
@@ -1586,6 +1527,8 @@ export default function App() {
       const jsonBlockRegex = /```json\s*(\{[\s\S]*?\})\s*```$/;
       const match = fullText.match(jsonBlockRegex);
       
+      let videoUri: string | undefined = undefined;
+
       if (match) {
         try {
           const actionData = JSON.parse(match[1]);
@@ -1597,7 +1540,6 @@ export default function App() {
              const target = files.find(f => f.name === actionData.file_name || f.id === actionData.file_id);
              if (target) updateFileContent(target.id, actionData.content);
           } else if (actionData.action === 'generate_image') {
-              // Handle image generation
               try {
                   const imgRes = await ai.models.generateContent({
                       model: 'gemini-3-pro-image-preview',
@@ -1615,11 +1557,38 @@ export default function App() {
               } catch(e: any) {
                   displayResponse += `\n\n*[System: Image generation error: ${e.message}]*`;
               }
+          } else if (actionData.action === 'generate_video') {
+              // Veo Video Generation
+              try {
+                 displayResponse += `\n\n*[System: Generating video with Veo... Please wait.]*`;
+                 // Trigger UI update first
+                 const tempMsg: Message = { role: 'model', text: displayResponse, specialist: specialistName, timestamp: Date.now() };
+                 updateFileContent(activeChatFile.id, JSON.stringify([...newHistory, tempMsg]));
+
+                 let operation = await ai.models.generateVideos({
+                      model: 'veo-3.1-fast-generate-preview',
+                      prompt: actionData.prompt || "Scientific Simulation",
+                      config: { numberOfVideos: 1, resolution: '1080p', aspectRatio: '16:9' }
+                 });
+
+                 while (!operation.done) {
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                    operation = await ai.operations.getVideosOperation({operation: operation});
+                 }
+                 
+                 const uri = operation.response?.generatedVideos?.[0]?.video?.uri;
+                 if(uri) {
+                     videoUri = `${uri}&key=${process.env.API_KEY}`;
+                     displayResponse += `\n\n**Video Generation Complete**`;
+                 }
+              } catch(e: any) {
+                  displayResponse += `\n\n*[System: Video generation error: ${e.message}]*`;
+              }
           }
         } catch (e) { console.error(e); }
       }
 
-      const modelMsg: Message = { role: 'model', text: displayResponse, specialist: specialistName, timestamp: Date.now() };
+      const modelMsg: Message = { role: 'model', text: displayResponse, specialist: specialistName, timestamp: Date.now(), videoUri };
       updateFileContent(activeChatFile.id, JSON.stringify([...newHistory, modelMsg]));
 
     } catch (error: any) {
@@ -1721,6 +1690,11 @@ export default function App() {
                         >
                             {msg.text}
                         </ReactMarkdown>
+                        {msg.videoUri && (
+                            <div className="mt-4">
+                                <video controls src={msg.videoUri} className="max-w-full rounded-md border border-[#444]" />
+                            </div>
+                        )}
                     </div>
                 </div>
             ))}
@@ -1739,7 +1713,7 @@ export default function App() {
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                    placeholder="Input Command..."
+                    placeholder="Input Command (Try: 'Generate a video of...')"
                     className="flex-1 bg-[#252526] border border-[#333] rounded-md px-4 py-3 text-sm text-slate-200 focus:outline-none focus:border-indigo-500 font-mono"
                     autoFocus
                 />
@@ -1755,6 +1729,31 @@ export default function App() {
       </div>
     );
   };
+
+  if (!hasKey) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-[#0a0a0a] text-white">
+        <div className="text-center max-w-lg">
+          <Bot size={80} className="mx-auto mb-6 text-indigo-500" />
+          <h1 className="text-4xl font-light tracking-widest uppercase mb-4">YANTRA</h1>
+          <p className="text-slate-400 mb-8">AI-Native Theoretical Research Apparatus</p>
+          <div className="bg-[#1e1e1e] p-6 rounded-lg border border-[#333] mb-8 text-sm text-slate-300">
+            <p className="mb-4">To access advanced features like <b>Veo Video Generation</b> and <b>High-Fidelity Imaging</b>, a valid API key is required.</p>
+            <p className="text-xs text-slate-500">Please select a project with billing enabled.</p>
+          </div>
+          <button 
+            onClick={handleSelectKey}
+            className="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-md font-semibold transition-all shadow-lg hover:shadow-indigo-500/20"
+          >
+            Initialize System
+          </button>
+           <p className="mt-8 text-xs text-slate-600">
+             <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noreferrer" className="underline hover:text-indigo-400">Billing Documentation</a>
+           </p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen bg-[#1e1e1e] text-[#cccccc] font-sans overflow-hidden">
@@ -1788,7 +1787,12 @@ export default function App() {
                                      key={f.id} 
                                      icon={
                                          f.type === 'chat' ? Bot : 
-                                         f.type === 'code' ? Code2 : 
+                                         f.type === 'code' ? (
+                                            f.subtype === 'python' ? Box :
+                                            f.subtype === 'c' ? Cpu :
+                                            f.subtype === 'matlab' ? Variable :
+                                            Code2
+                                         ) : 
                                          f.type === 'doc' ? FileText : 
                                          f.type === 'whiteboard' ? PenTool : 
                                          f.type === 'sheet' ? Table : 
@@ -1796,6 +1800,7 @@ export default function App() {
                                          f.type === 'search' ? Globe : StickyNote
                                      } 
                                      fileType={f.type}
+                                     subtype={f.subtype}
                                      label={f.name} 
                                      active={activeTabId === f.id}
                                      onClick={() => {
@@ -1944,7 +1949,6 @@ export default function App() {
                                 onChange={(val: string) => updateFileContent(activeFile.id, val)} 
                                 onRun={() => runCode(activeFile.content, activeFile.name, activeFile.subtype, activeFile.id)}
                                 onRename={renameFile}
-                                apiKey={apiKey}
                             />
                         )}
                         {(activeFile.type === 'doc' || activeFile.type === 'note') && (
@@ -1953,7 +1957,6 @@ export default function App() {
                                 onChange={(val: string) => updateFileContent(activeFile.id, val)}
                                 onRename={renameFile}
                                 isDriveConnected={isDriveConnected}
-                                apiKey={apiKey}
                             />
                         )}
                         {activeFile.type === 'sheet' && (
@@ -1962,7 +1965,6 @@ export default function App() {
                                 onChange={(val: string) => updateFileContent(activeFile.id, val)}
                                 onRename={renameFile}
                                 isDriveConnected={isDriveConnected}
-                                apiKey={apiKey}
                             />
                         )}
                         {activeFile.type === 'whiteboard' && (
@@ -1978,13 +1980,11 @@ export default function App() {
                                 onChange={(val: string) => updateFileContent(activeFile.id, val)}
                                 onRename={renameFile}
                                 isDriveConnected={isDriveConnected}
-                                apiKey={apiKey}
                             />
                         )}
                         {activeFile.type === 'search' && (
                             <SearchEditor
                                 file={activeFile}
-                                apiKey={apiKey}
                                 onChange={(val: string) => updateFileContent(activeFile.id, val)}
                                 onRename={renameFile}
                             />
