@@ -6,7 +6,7 @@
 
 **One laboratory. Fifty-one minds. Zero fragmentation.**
 
-🎥 90-second demo → https://loom.com/...
+[![Watch the video](https://img.youtube.com/vi/Ls_KQK6nVvQ/maxresdefault.jpg)](https://youtu.be/Ls_KQK6nVvQ)
 
 yantra (the repository name as found in package.json) is the codebase for YANTRA — the unified, multimodal "Operating System for Science". YANTRA is designed to eliminate tool fragmentation in research by providing a single integrated environment where human intention is yoked to a suite of specialized AI agents, live execution environments, and rich authoring tools.
 
